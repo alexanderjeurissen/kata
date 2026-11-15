@@ -55,11 +55,13 @@ func RunRelayRetryCleanup(t *testing.T, store db.Storage) {
 					return nil
 				}))
 			})
+			before := relayStateForBinding(t, store, binding)
 			out, err := store.PendingRelayDeliveries(fenced, binding, db.RelayStreamEvent, 100)
 			if failCleanup {
 				require.ErrorIs(t, err, db.ErrTransactionFinalizationFailed)
 				require.ErrorIs(t, err, cleanupErr)
 				require.Empty(t, out)
+				require.Equal(t, before, relayStateForBinding(t, store, binding))
 				require.Equal(t, 1, attempts)
 				require.ErrorIs(t, db.FinishTransactionRollback(ctx, err, nil), cleanupErr)
 			} else {
