@@ -65,4 +65,3 @@ func NewRelaySharedAccessFixture(t *testing.T, store db.Storage) RelaySharedAcce
 
 	return RelaySharedAccessFixture{Projects: projects, Issues: issues, Grant: grant, Linked: linked, Team: team, Signer: db.RootAttributionSigner{AuthorityUID: store.InstanceUID(), PrivateKey: private}}
 }
-

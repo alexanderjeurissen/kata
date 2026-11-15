@@ -82,6 +82,53 @@ func RunRelayCrossLinkResetHistory(t *testing.T, root db.Storage, backend Backen
 		}
 	}
 	features := db.WithRelayPeerEventFeatures(ctx, db.SupportedEventFeatures)
+	denied := errors.New("peer denied")
+	rejectPeer := db.WithProjectAccessTransactionCheck(features, func(_ context.Context, _ db.Transaction, uid string) error {
+		if uid == projects[1].UID {
+			return denied
+		}
+		return nil
+	})
+	beforeBinding := relayStateForBinding(t, root, binding)
+	blockedItems, err := root.PendingRelayDeliveries(rejectPeer, binding, db.RelayStreamEvent, 100)
+	require.ErrorIs(t, err, denied)
+	require.Empty(t, blockedItems)
+	require.Equal(t, beforeBinding, relayStateForBinding(t, root, binding))
+	items, err := root.PendingRelayDeliveries(features, binding, db.RelayStreamEvent, 100)
+	require.NoError(t, err)
+	require.NotEmpty(t, items)
+	blockedItems, err = root.PendingRelayDeliveries(rejectPeer, binding, db.RelayStreamEvent, 100)
+	require.ErrorIs(t, err, denied)
+	require.Empty(t, blockedItems)
+	retriedItems, err := root.PendingRelayDeliveries(features, binding, db.RelayStreamEvent, 100)
+	require.NoError(t, err)
+	require.Equal(t, items, retriedItems)
+	last := items[len(items)-1]
+	require.NoError(t, root.AckRelayDeliveries(ctx, binding, 1, db.RelayStreamEvent, last.Sequence, last.Digest))
+	_, ordinary, err := root.CreateIssue(ctx, db.CreateIssueParams{ProjectID: projects[0].ID, Author: "member", Title: "Before crossing"})
+	require.NoError(t, err)
+	_, crossing, err := root.CreateLinkAndEvent(db.WithRootAttribution(ctx, signer, "root-member"), db.CreateLinkParams{FromIssueID: issues[0].ID, ToIssueID: issues[1].ID, Type: "related", Author: "root-member"}, db.LinkEventParams{EventType: "issue.linked", EventIssueID: issues[0].ID, Actor: "root-member", FromUID: issues[0].UID, ToUID: issues[1].UID, FromShortID: issues[0].ShortID, ToShortID: issues[1].ShortID})
+	require.NoError(t, err)
+	prefix, err := root.PendingRelayDeliveries(ctx, binding, db.RelayStreamEvent, 100)
+	require.NoError(t, err)
+	require.Len(t, prefix, 1)
+	require.Equal(t, ordinary.UID, prefix[0].SourceUID)
+	replayed, err := root.PendingRelayDeliveries(ctx, binding, db.RelayStreamEvent, 100)
+	require.NoError(t, err)
+	require.Equal(t, prefix, replayed)
+	require.NoError(t, root.AckRelayDeliveries(ctx, binding, 1, db.RelayStreamEvent, prefix[0].Sequence, prefix[0].Digest))
+	_, err = root.PendingRelayDeliveries(ctx, binding, db.RelayStreamEvent, 100)
+	require.ErrorIs(t, err, db.ErrUnsupportedEventFeatures)
+	next, err := root.PendingRelayDeliveries(features, binding, db.RelayStreamEvent, 100)
+	require.NoError(t, err)
+	require.Len(t, next, 1)
+	require.Equal(t, crossing.UID, next[0].SourceUID)
+	require.Equal(t, crossing.ContentHash, next[0].SourceHash)
+	// Deliver the acknowledged initial history before the remaining events.
+	_, err = hub.AcceptRelayDeliveries(ctx, binding, db.RelayBatch{Stream: db.RelayStreamEvent, Envelopes: items})
+	require.NoError(t, err)
+	_, err = hub.AcceptRelayDeliveries(ctx, binding, db.RelayBatch{Stream: db.RelayStreamEvent, Envelopes: prefix})
+	require.NoError(t, err)
 	deliver(t)
 	hubIssue, err := hub.IssueByUID(ctx, issues[0].UID, db.IncludeDeletedYes)
 	require.NoError(t, err)
@@ -131,11 +178,18 @@ func RunRelayCrossLinkResetHistory(t *testing.T, root db.Storage, backend Backen
 	afterGrants, err := root.ListProjectFederationEnrollments(ctx, projects[0].ID)
 	require.NoError(t, err)
 	require.Equal(t, grants, afterGrants)
+	blocked, err := rootResets.CreateRelayReset(rejectPeer, binding, signer)
+	require.ErrorIs(t, err, denied)
+	require.Equal(t, db.RelayResetCheckpoint{}, blocked)
+	require.Equal(t, before, relayState(root))
 	checkpoint, err := rootResets.CreateRelayReset(features, binding, signer)
 	require.NoError(t, err)
 	require.NotEqual(t, eventsBefore, projectEvents(root, projects[0].ID))
 	require.NotEqual(t, metaBefore, checkpointMeta(root, projects[0].UID))
 
+	blocked, err = rootResets.CreateRelayReset(rejectPeer, binding, signer)
+	require.ErrorIs(t, err, denied)
+	require.Equal(t, db.RelayResetCheckpoint{}, blocked)
 	_, err = rootResets.CreateRelayReset(ctx, binding, signer)
 	require.ErrorIs(t, err, db.ErrUnsupportedEventFeatures)
 	retry, err := rootResets.CreateRelayReset(features, binding, signer)
@@ -180,13 +234,6 @@ func RunRelayCrossLinkResetHistory(t *testing.T, root db.Storage, backend Backen
 	afterGrants, err = hub.ListProjectFederationEnrollments(ctx, hubProject.ID)
 	require.NoError(t, err)
 	require.Equal(t, grants, afterGrants)
-	denied := errors.New("peer denied")
-	rejectPeer := db.WithProjectAccessTransactionCheck(features, func(_ context.Context, _ db.Transaction, uid string) error {
-		if uid == projects[1].UID {
-			return denied
-		}
-		return nil
-	})
 	before = relayState(hub)
 	_, err = hubResets.CreateRelayReset(rejectPeer, downstream, db.RootAttributionSigner{})
 	require.ErrorIs(t, err, denied)
