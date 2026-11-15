@@ -154,17 +154,20 @@ func RunRelayCrossLinkResetHistory(t *testing.T, root db.Storage, backend Backen
 	hubProject, err := hub.ProjectByUID(ctx, projects[0].UID)
 	require.NoError(t, err)
 	downstream := enroll(hub, leaf, hubProject, "reset-leaf", false)
-	for _, stream := range []string{db.RelayStreamEvent, db.RelayStreamReceipt, db.RelayStreamArtifact} {
-		for {
-			items, err := hub.PendingRelayDeliveries(features, downstream, stream, 100)
-			require.NoError(t, err)
-			if len(items) == 0 {
-				break
+	drain := func(binding string) {
+		for _, stream := range []string{db.RelayStreamEvent, db.RelayStreamReceipt, db.RelayStreamArtifact} {
+			for {
+				items, err := hub.PendingRelayDeliveries(features, binding, stream, 100)
+				require.NoError(t, err)
+				if len(items) == 0 {
+					break
+				}
+				last := items[len(items)-1]
+				require.NoError(t, hub.AckRelayDeliveries(ctx, binding, 1, stream, last.Sequence, last.Digest))
 			}
-			last := items[len(items)-1]
-			require.NoError(t, hub.AckRelayDeliveries(ctx, downstream, 1, stream, last.Sequence, last.Digest))
 		}
 	}
+	drain(downstream)
 	before = relayState(hub)
 	grants, err = hub.ListProjectFederationEnrollments(ctx, hubProject.ID)
 	require.NoError(t, err)
@@ -181,17 +184,7 @@ func RunRelayCrossLinkResetHistory(t *testing.T, root db.Storage, backend Backen
 	peerProject, err := hub.ProjectByUID(ctx, projects[1].UID)
 	require.NoError(t, err)
 	peerDownstream := enroll(hub, leaf, peerProject, "reset-peer-leaf", false)
-	for _, stream := range []string{db.RelayStreamEvent, db.RelayStreamReceipt, db.RelayStreamArtifact} {
-		for {
-			items, err := hub.PendingRelayDeliveries(features, peerDownstream, stream, 100)
-			require.NoError(t, err)
-			if len(items) == 0 {
-				break
-			}
-			last := items[len(items)-1]
-			require.NoError(t, hub.AckRelayDeliveries(ctx, peerDownstream, 1, stream, last.Sequence, last.Digest))
-		}
-	}
+	drain(peerDownstream)
 	peerForwarded, err := hubResets.CreateRelayReset(features, peerDownstream, db.RootAttributionSigner{})
 	require.NoError(t, err)
 	leafResets := leaf.(db.RelayResetStore)
@@ -218,8 +211,6 @@ func RunRelayCrossLinkResetHistory(t *testing.T, root db.Storage, backend Backen
 		require.NoError(t, err)
 		require.Equal(t, []string{localParent.UID}, linkTargetUIDs(t, hub, hubIssue.ID))
 	})
-	_, err = root.DeleteLinkAndEvent(db.WithRootAttribution(ctx, signer, "root-member"), parentLink, db.LinkEventParams{EventType: "issue.unlinked", EventIssueID: issues[0].ID, Actor: "root-member", FromUID: issues[0].UID, ToUID: issues[1].UID, FromShortID: issues[0].ShortID, ToShortID: issues[1].ShortID})
-	require.NoError(t, err)
 	t.Run("archive refreshes reset history", func(t *testing.T) {
 		bootstrap := root.(db.RelayResetBootstrapStore)
 		//nolint:gosec // This is a deterministic fixture credential.
@@ -233,6 +224,16 @@ func RunRelayCrossLinkResetHistory(t *testing.T, root db.Storage, backend Backen
 		require.False(t, required)
 		_, _, err = root.RemoveProject(ctx, db.RemoveProjectParams{ProjectID: projects[1].ID, Actor: "root-member", Force: true})
 		require.NoError(t, err)
+		_, err = root.(db.ParentLinkReplacementStorage).ReplaceParentAndEvents(ctx, db.ReplaceParentAndEventsParams{
+			ExpectedParentLinkID: parentLink.ID, ExpectedParentIssueID: issues[1].ID,
+			Link:        db.CreateLinkParams{FromIssueID: issues[0].ID, ToIssueID: localParent.ID, Type: "parent", Author: "member"},
+			UnlinkEvent: db.LinkEventParams{EventType: "issue.unlinked", EventIssueID: issues[0].ID},
+			LinkEvent:   db.LinkEventParams{EventType: "issue.linked", EventIssueID: issues[0].ID, FromUID: issues[0].UID, ToUID: localParent.UID},
+		})
+		require.NoError(t, err)
+		parentIssue, err := root.ParentOf(ctx, issues[0].ID)
+		require.NoError(t, err)
+		require.Equal(t, localParent.UID, parentIssue.ToIssueUID)
 		//nolint:gosec // This is a deterministic fixture credential.
 		newGrant, err := root.CreateRelayEnrollment(ctx, db.CreateRelayEnrollmentParams{ProjectID: projects[0].ID, ParentTokenID: parent.ID, SpokeInstanceUID: "00000000000000000000000006", ProtocolVersion: db.RelayProtocolVersion, Token: "archived-peer-relay-test-token"})
 		require.NoError(t, err)
@@ -249,43 +250,4 @@ func RunRelayCrossLinkResetHistory(t *testing.T, root db.Storage, backend Backen
 		require.NoError(t, err)
 		require.Equal(t, afterArchive, retry)
 	})
-}
-
-// RunRelayReplaceArchivedParent checks replacement after a peer is archived.
-func RunRelayReplaceArchivedParent(t *testing.T, root db.Storage) {
-	ctx := t.Context()
-	_, private, err := ed25519.GenerateKey(nil)
-	require.NoError(t, err)
-	var projects [2]db.Project
-	var issues [2]db.Issue
-	for i, name := range []string{"parent-source", "parent-peer"} {
-		projects[i], err = root.CreateProject(ctx, name)
-		require.NoError(t, err)
-		_, err = root.UpsertFederationBinding(ctx, db.FederationBinding{ProjectID: projects[i].ID, Role: db.FederationRoleHub, HubProjectID: projects[i].ID, HubProjectUID: projects[i].UID, Enabled: true})
-		require.NoError(t, err)
-		public := private.Public().(ed25519.PublicKey)
-		require.NoError(t, root.PinRootAuthority(ctx, db.RootKeyPin{ProjectUID: projects[i].UID, AuthorityUID: root.InstanceUID(), KeyID: db.RootPublicKeyID(public), PublicKey: public}))
-		issues[i], _, err = root.CreateIssue(ctx, db.CreateIssueParams{ProjectID: projects[i].ID, Author: "member", Title: name})
-		require.NoError(t, err)
-	}
-	parentToken, _, err := root.CreateAPIToken(ctx, db.CreateAPITokenParams{Actor: "member", AdminActor: "admin", PlaintextToken: "parent-replace-token"})
-	require.NoError(t, err)
-	_, err = root.CreateRelayEnrollment(ctx, db.CreateRelayEnrollmentParams{ProjectID: projects[0].ID, ParentTokenID: parentToken.ID, SpokeInstanceUID: "00000000000000000000000007", ProtocolVersion: db.RelayProtocolVersion, Token: "parent-replace-relay-token"})
-	require.NoError(t, err)
-	newParent, _, err := root.CreateIssue(ctx, db.CreateIssueParams{ProjectID: projects[0].ID, Author: "member", Title: "New parent"})
-	require.NoError(t, err)
-	old, _, err := root.CreateLinkAndEvent(ctx, db.CreateLinkParams{FromIssueID: issues[0].ID, ToIssueID: issues[1].ID, Type: "parent", Author: "member"}, db.LinkEventParams{EventType: "issue.linked", EventIssueID: issues[0].ID, FromUID: issues[0].UID, ToUID: issues[1].UID})
-	require.NoError(t, err)
-	_, _, err = root.RemoveProject(ctx, db.RemoveProjectParams{ProjectID: projects[1].ID, Actor: "member", Force: true})
-	require.NoError(t, err)
-	_, err = root.(db.ParentLinkReplacementStorage).ReplaceParentAndEvents(ctx, db.ReplaceParentAndEventsParams{
-		ExpectedParentLinkID: old.ID, ExpectedParentIssueID: issues[1].ID,
-		Link:        db.CreateLinkParams{FromIssueID: issues[0].ID, ToIssueID: newParent.ID, Type: "parent", Author: "member"},
-		UnlinkEvent: db.LinkEventParams{EventType: "issue.unlinked", EventIssueID: issues[0].ID},
-		LinkEvent:   db.LinkEventParams{EventType: "issue.linked", EventIssueID: issues[0].ID, FromUID: issues[0].UID, ToUID: newParent.UID},
-	})
-	require.NoError(t, err)
-	parent, err := root.ParentOf(ctx, issues[0].ID)
-	require.NoError(t, err)
-	require.Equal(t, newParent.UID, parent.ToIssueUID)
 }

@@ -199,13 +199,18 @@ func TestOfflineParentKeepsRootCrossLink(t *testing.T) {
 				require.NoError(t, err)
 				localParentCopy, err := editor.store.IssueByUID(ctx, localParent.UID, db.IncludeDeletedYes)
 				require.NoError(t, err)
-				_, _, err = editor.store.CreateLinkAndEvent(ctx, db.CreateLinkParams{FromIssueID: localChild.ID, ToIssueID: localParentCopy.ID, Type: "parent", Author: editor.account}, db.LinkEventParams{EventType: "issue.linked", EventIssueID: localChild.ID, Actor: editor.account, FromUID: child.UID, ToUID: localParent.UID, FromShortID: localChild.ShortID, ToShortID: localParentCopy.ShortID})
+				_, editEvent, err := editor.store.CreateLinkAndEvent(ctx, db.CreateLinkParams{FromIssueID: localChild.ID, ToIssueID: localParentCopy.ID, Type: "parent", Author: editor.account}, db.LinkEventParams{EventType: "issue.linked", EventIssueID: localChild.ID, Actor: editor.account, FromUID: child.UID, ToUID: localParent.UID, FromShortID: localChild.ShortID, ToShortID: localParentCopy.ShortID})
 				require.NoError(t, err)
 				syncRelayMatrixNode(t, editor)
 				if direct {
 					syncRelayMatrixNode(t, peers[0])
 				}
 				for _, store := range []db.Storage{root.store, replica.store} {
+					project, err := store.ProjectByUID(ctx, projects[0].UID)
+					require.NoError(t, err)
+					events, err := store.EventsByUIDs(ctx, project.ID, []string{editEvent.UID})
+					require.NoError(t, err)
+					require.Len(t, events, 1)
 					local, err := store.IssueByUID(ctx, child.UID, db.IncludeDeletedYes)
 					require.NoError(t, err)
 					parent, err := store.ParentOf(ctx, local.ID)

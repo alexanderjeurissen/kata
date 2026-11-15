@@ -88,7 +88,7 @@ func TestRelayCrossLinkPolicy(t *testing.T) {
 	authority.Roots["b"] = "other"
 	require.False(t, authority.Policy(event).SameRoot(peer))
 	authority.Roots["b"] = "root"
-	authority.Groups["a"]["b"] = false
+	delete(authority.Groups["a"], "b")
 	require.False(t, authority.Policy(event).SameRoot(peer))
 	event.OriginInstanceUID = "replica"
 	require.False(t, authority.Policy(event).RootOrigin)

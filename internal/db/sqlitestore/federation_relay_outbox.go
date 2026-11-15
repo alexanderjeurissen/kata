@@ -84,30 +84,12 @@ func (d *Store) PendingRelayDeliveries(ctx context.Context, bindingUID, stream s
 		if err != nil {
 			return err
 		}
-		if stream == db.RelayStreamEvent && len(output) > 0 {
-			pin, err := rootPinTx(ctx, tx, projectUID, "")
+		if stream == db.RelayStreamEvent {
+			count, err := db.RelayEventFeaturePrefix(ctx, relayResetBackend{tx: tx}, projectUID, output)
 			if err != nil {
 				return err
 			}
-			for i, envelope := range output {
-				event, err := db.DecodeRelaySourceEvent(envelope.Body)
-				if err != nil {
-					return err
-				}
-				required, err := db.RelayContentRequiredFeatures(event, pin.AuthorityUID, func(uid string) (string, error) {
-					return (relayResetBackend{tx: tx}).IssueProjectUID(ctx, uid)
-				})
-				if err != nil {
-					return err
-				}
-				if err := db.RequireEventFeatures(db.RelayPeerEventFeatures(ctx), required); err != nil {
-					if i == 0 {
-						return err
-					}
-					output, ids = output[:i], ids[:i]
-					break
-				}
-			}
+			output, ids = output[:count], ids[:count]
 		}
 		for _, id := range ids {
 			if _, err := tx.ExecContext(ctx, `UPDATE federation_relay_outbox SET emitted=1 WHERE id=?`, id); err != nil {

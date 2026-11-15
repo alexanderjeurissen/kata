@@ -388,6 +388,37 @@ func RelayPeerEventFeatures(ctx context.Context) string {
 	return features
 }
 
+// RelayEventFeaturePrefix returns the deliverable prefix supported by the peer.
+func RelayEventFeaturePrefix(ctx context.Context, backend interface {
+	RootPin(context.Context, string, string) (RootKeyPin, error)
+	IssueProjectUID(context.Context, string) (string, error)
+}, projectUID string, envelopes []RelayEnvelope) (int, error) {
+	if len(envelopes) == 0 {
+		return 0, nil
+	}
+	pin, err := backend.RootPin(ctx, projectUID, "")
+	if err != nil {
+		return 0, err
+	}
+	for i, envelope := range envelopes {
+		event, err := DecodeRelaySourceEvent(envelope.Body)
+		if err != nil {
+			return 0, err
+		}
+		required, err := RelayContentRequiredFeatures(event, pin.AuthorityUID, func(uid string) (string, error) { return backend.IssueProjectUID(ctx, uid) })
+		if err != nil {
+			return 0, err
+		}
+		if err := RequireEventFeatures(RelayPeerEventFeatures(ctx), required); err != nil {
+			if i == 0 {
+				return 0, err
+			}
+			return i, nil
+		}
+	}
+	return len(envelopes), nil
+}
+
 // RelayContentRequiredFeatures identifies root links a peer must understand.
 // resolve returns an empty project for an endpoint that has not arrived yet.
 func RelayContentRequiredFeatures(event RemoteEvent, root string, resolve func(string) (string, error)) (string, error) {
