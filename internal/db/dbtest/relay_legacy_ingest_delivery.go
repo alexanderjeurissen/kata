@@ -51,6 +51,7 @@ func RunDirectParentConflict(t *testing.T, store db.Storage) {
 	}
 }
 
+// RunRelayCrossProjectRemoval checks that relay removals preserve cross-project links.
 func RunRelayCrossProjectRemoval(t *testing.T, store db.Storage) {
 	ctx := t.Context()
 	fixture := newRelayLinkBoundaryFixture(t, store, "relay-cross-removal")
