@@ -1,8 +1,10 @@
 package dbtest
 
 import (
+	"context"
 	"crypto/ed25519"
 	"encoding/json/jsontext"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -195,6 +197,22 @@ func RunRelayCrossLinkResetHistory(t *testing.T, root db.Storage, backend Backen
 	leafIssue, err := leaf.IssueByUID(ctx, issues[0].UID, db.IncludeDeletedYes)
 	require.NoError(t, err)
 	require.Equal(t, []string{issues[1].UID}, linkTargetUIDs(t, leaf, leafIssue.ID))
+	_, err = hubResets.CreateRelayReset(ctx, downstream, db.RootAttributionSigner{})
+	require.ErrorIs(t, err, db.ErrUnsupportedEventFeatures)
+	denied := errors.New("peer denied")
+	rejectPeer := db.WithProjectAccessTransactionCheck(features, func(_ context.Context, _ db.Transaction, uid string) error {
+		if uid == projects[1].UID {
+			return denied
+		}
+		return nil
+	})
+	before = relayState(hub)
+	_, err = hubResets.CreateRelayReset(rejectPeer, downstream, db.RootAttributionSigner{})
+	require.ErrorIs(t, err, denied)
+	require.Equal(t, before, relayState(hub))
+	retry, err = hubResets.CreateRelayReset(features, downstream, db.RootAttributionSigner{})
+	require.NoError(t, err)
+	require.Equal(t, forwarded, retry)
 	t.Run("parent replacement after peer leaves group", func(t *testing.T) {
 		peerProject, err := hub.ProjectByUID(ctx, projects[1].UID)
 		require.NoError(t, err)
