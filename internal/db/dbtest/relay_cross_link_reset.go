@@ -251,6 +251,7 @@ func RunRelayCrossLinkResetHistory(t *testing.T, root db.Storage, backend Backen
 	})
 }
 
+// RunRelayReplaceArchivedParent checks replacement after a peer is archived.
 func RunRelayReplaceArchivedParent(t *testing.T, root db.Storage) {
 	ctx := t.Context()
 	_, private, err := ed25519.GenerateKey(nil)
