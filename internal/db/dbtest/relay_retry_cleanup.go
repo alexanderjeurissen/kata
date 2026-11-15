@@ -18,21 +18,23 @@ func (relayTransientError) Code() int        { return 5 }
 func (relayTransientError) SQLState() string { return "40001" }
 
 // RunRelayRetryCleanup checks host cleanup before a relay transaction retry.
-func RunRelayRetryCleanup(t *testing.T, store db.Storage) {
-	fixture := NewRelaySharedAccessFixture(t, store)
-	binding := fixture.Grant.Enrollment.RelayBindingUID
-	timeout, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-	defer cancel()
-	if pool, ok := store.(interface{ SetMaxOpenConns(int) }); ok {
-		pool.SetMaxOpenConns(1)
-	}
-	ctx := db.WithRelayPeerEventFeatures(timeout, db.SupportedEventFeatures)
+func RunRelayRetryCleanup(t *testing.T, backend Backend) {
 	for _, failCleanup := range []bool{false, true} {
 		name := "retry after cleanup"
 		if failCleanup {
 			name = "stop when cleanup fails"
 		}
 		t.Run(name, func(t *testing.T) {
+			store := backend.Open(t)
+			t.Cleanup(func() { require.NoError(t, store.Close()) })
+			fixture := NewRelaySharedAccessFixture(t, store)
+			binding := fixture.Grant.Enrollment.RelayBindingUID
+			timeout, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+			defer cancel()
+			pool, ok := store.(interface{ SetMaxOpenConns(int) })
+			require.True(t, ok)
+			pool.SetMaxOpenConns(1)
+			ctx := db.WithRelayPeerEventFeatures(timeout, db.SupportedEventFeatures)
 			attempts, cleanups := 0, 0
 			cleanupErr := errors.New("cleanup failed")
 			fenced := db.WithProjectAccessTransactionCheck(ctx, func(_ context.Context, _ db.Transaction, uid string) error {
