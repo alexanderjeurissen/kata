@@ -168,17 +168,8 @@ func (p RelayResetProtocol) AuthorizeCheckpointDownload(ctx context.Context, bin
 	if err != nil {
 		return RelayResetCheckpoint{}, err
 	}
-	known := map[string]bool{}
-	for _, event := range events {
-		if event.IssueUID != nil && (event.Type == "issue.created" || event.Type == "issue.snapshot") {
-			known[*event.IssueUID] = true
-		}
-	}
 	for _, event := range events {
 		required, err := RelayContentRequiredFeatures(event, pin.AuthorityUID, func(uid string) (string, error) {
-			if known[uid] {
-				return event.ProjectUID, nil
-			}
 			return p.Backend.IssueProjectUID(ctx, uid)
 		})
 		if err != nil {

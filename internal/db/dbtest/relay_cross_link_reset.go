@@ -94,7 +94,7 @@ func RunRelayCrossLinkResetHistory(t *testing.T, root db.Storage, backend Backen
 	_, err = root.DeleteLinkAndEvent(db.WithRootAttribution(ctx, signer, "root-member"), blocksLink, db.LinkEventParams{EventType: "issue.unlinked", EventIssueID: issues[0].ID, Actor: "root-member", FromUID: issues[0].UID, ToUID: issues[1].UID})
 	require.NoError(t, err)
 	require.Empty(t, linkTargetUIDs(t, root, issues[0].ID))
-	parentLink, _, err := root.CreateLinkAndEvent(db.WithRootAttribution(ctx, signer, "root-member"), db.CreateLinkParams{FromIssueID: issues[0].ID, ToIssueID: issues[1].ID, Type: "parent", Author: "root-member"}, db.LinkEventParams{EventType: "issue.linked", EventIssueID: issues[0].ID, Actor: "root-member", FromUID: issues[0].UID, ToUID: issues[1].UID, FromShortID: issues[0].ShortID, ToShortID: issues[1].ShortID})
+	_, _, err = root.CreateLinkAndEvent(db.WithRootAttribution(ctx, signer, "root-member"), db.CreateLinkParams{FromIssueID: issues[0].ID, ToIssueID: issues[1].ID, Type: "parent", Author: "root-member"}, db.LinkEventParams{EventType: "issue.linked", EventIssueID: issues[0].ID, Actor: "root-member", FromUID: issues[0].UID, ToUID: issues[1].UID, FromShortID: issues[0].ShortID, ToShortID: issues[1].ShortID})
 	require.NoError(t, err)
 	t.Run("replacement reaches relay", func(t *testing.T) {
 		child, _, err := root.CreateIssue(ctx, db.CreateIssueParams{ProjectID: projects[0].ID, Author: "member", Title: "Replacement child"})
@@ -210,44 +210,5 @@ func RunRelayCrossLinkResetHistory(t *testing.T, root db.Storage, backend Backen
 		_, err = hub.AcceptRelayDeliveries(ctx, binding, db.RelayBatch{Stream: db.RelayStreamEvent, Envelopes: []db.RelayEnvelope{envelope}})
 		require.NoError(t, err)
 		require.Equal(t, []string{localParent.UID}, linkTargetUIDs(t, hub, hubIssue.ID))
-	})
-	t.Run("archive refreshes reset history", func(t *testing.T) {
-		bootstrap := root.(db.RelayResetBootstrapStore)
-		//nolint:gosec // This is a deterministic fixture credential.
-		parent, _, err := root.CreateAPIToken(ctx, db.CreateAPITokenParams{Actor: "member", AdminActor: "admin", PlaintextToken: "archived-peer-parent-test-token"})
-		require.NoError(t, err)
-		//nolint:gosec // This is a deterministic fixture credential.
-		warmGrant, err := root.CreateRelayEnrollment(ctx, db.CreateRelayEnrollmentParams{ProjectID: projects[0].ID, ParentTokenID: parent.ID, SpokeInstanceUID: "00000000000000000000000005", ProtocolVersion: db.RelayProtocolVersion, Token: "warm-relay-test-token"})
-		require.NoError(t, err)
-		required, err := bootstrap.RelayEnrollmentNeedsReset(ctx, warmGrant.Enrollment.RelayBindingUID)
-		require.NoError(t, err)
-		require.False(t, required)
-		_, _, err = root.RemoveProject(ctx, db.RemoveProjectParams{ProjectID: projects[1].ID, Actor: "root-member", Force: true})
-		require.NoError(t, err)
-		_, err = root.(db.ParentLinkReplacementStorage).ReplaceParentAndEvents(ctx, db.ReplaceParentAndEventsParams{
-			ExpectedParentLinkID: parentLink.ID, ExpectedParentIssueID: issues[1].ID,
-			Link:        db.CreateLinkParams{FromIssueID: issues[0].ID, ToIssueID: localParent.ID, Type: "parent", Author: "member"},
-			UnlinkEvent: db.LinkEventParams{EventType: "issue.unlinked", EventIssueID: issues[0].ID},
-			LinkEvent:   db.LinkEventParams{EventType: "issue.linked", EventIssueID: issues[0].ID, FromUID: issues[0].UID, ToUID: localParent.UID},
-		})
-		require.NoError(t, err)
-		parentIssue, err := root.ParentOf(ctx, issues[0].ID)
-		require.NoError(t, err)
-		require.Equal(t, localParent.UID, parentIssue.ToIssueUID)
-		//nolint:gosec // This is a deterministic fixture credential.
-		newGrant, err := root.CreateRelayEnrollment(ctx, db.CreateRelayEnrollmentParams{ProjectID: projects[0].ID, ParentTokenID: parent.ID, SpokeInstanceUID: "00000000000000000000000006", ProtocolVersion: db.RelayProtocolVersion, Token: "archived-peer-relay-test-token"})
-		require.NoError(t, err)
-		required, err = bootstrap.RelayEnrollmentNeedsReset(ctx, newGrant.Enrollment.RelayBindingUID)
-		require.NoError(t, err)
-		require.True(t, required)
-		newReset, err := rootResets.CreateRelayReset(features, newGrant.Enrollment.RelayBindingUID, signer)
-		require.NoError(t, err)
-		requireResetOmitsIssue(t, newReset, issues[1])
-		afterArchive, err := rootResets.CreateRelayReset(features, binding, signer)
-		require.NoError(t, err)
-		requireResetOmitsIssue(t, afterArchive, issues[1])
-		retry, err = rootResets.CreateRelayReset(features, binding, signer)
-		require.NoError(t, err)
-		require.Equal(t, afterArchive, retry)
 	})
 }

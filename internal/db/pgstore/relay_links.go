@@ -168,11 +168,6 @@ func filterRelayCrossProjectLinkEvents(
 		return nil, nil, err
 	}
 
-	for _, event := range events {
-		if event.IssueUID != "" && issueProjects[event.IssueUID] == "" {
-			issueProjects[event.IssueUID] = event.ProjectUID
-		}
-	}
 	authority, err := relayFoldAuthorityTx(ctx, tx, issueProjects, classifier.instanceUID)
 	if err != nil {
 		return nil, nil, err

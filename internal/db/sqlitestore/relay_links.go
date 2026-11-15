@@ -174,11 +174,6 @@ func filterRelayCrossProjectLinkEvents(
 }
 
 func filterRelayLinkEvents(ctx context.Context, tx *sql.Tx, events []db.FoldEvent, classifier relayOriginClassifier, issueProjects map[string]string) ([]db.FoldEvent, db.FoldParentRemovalCheck, error) {
-	for _, event := range events {
-		if event.IssueUID != "" && issueProjects[event.IssueUID] == "" {
-			issueProjects[event.IssueUID] = event.ProjectUID
-		}
-	}
 	authority, err := relayFoldAuthorityTx(ctx, tx, issueProjects, classifier.instanceUID)
 	if err != nil {
 		return nil, nil, err
