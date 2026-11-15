@@ -10,8 +10,10 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kata/internal/db"
 	"go.kenn.io/kata/internal/notification"
+	"go.kenn.io/kata/internal/uid"
 )
 
+// RunRelayMovePeerReset checks peer access to a retained move checkpoint.
 func RunRelayMovePeerReset(t *testing.T, store db.Storage) {
 	ctx := t.Context()
 	var projects [3]db.Project
@@ -35,9 +37,11 @@ func RunRelayMovePeerReset(t *testing.T, store db.Storage) {
 	require.NoError(t, err)
 	pin := db.RootKeyPin{ProjectUID: projects[1].UID, AuthorityUID: store.InstanceUID(), KeyID: db.RootPublicKeyID(public), PublicKey: public}
 	require.NoError(t, store.PinRootAuthority(ctx, pin))
-	parent, _, err := store.CreateAPIToken(ctx, db.CreateAPITokenParams{Actor: "member", AdminActor: "admin", PlaintextToken: "move-peer-parent-test-token"})
+	parentToken, err := uid.New()
 	require.NoError(t, err)
-	grant, err := store.CreateRelayEnrollment(ctx, db.CreateRelayEnrollmentParams{ProjectID: projects[1].ID, ParentTokenID: parent.ID, SpokeInstanceUID: "00000000000000000000000006", ProtocolVersion: db.RelayProtocolVersion, Token: "move-peer-relay-test-token"})
+	parent, _, err := store.CreateAPIToken(ctx, db.CreateAPITokenParams{Actor: "member", AdminActor: "admin", PlaintextToken: parentToken})
+	require.NoError(t, err)
+	grant, err := store.CreateRelayEnrollment(ctx, db.CreateRelayEnrollmentParams{ProjectID: projects[1].ID, ParentTokenID: parent.ID, SpokeInstanceUID: "00000000000000000000000006", ProtocolVersion: db.RelayProtocolVersion})
 	require.NoError(t, err)
 	binding := grant.Enrollment.RelayBindingUID
 	signer := db.RootAttributionSigner{AuthorityUID: store.InstanceUID(), PrivateKey: private}

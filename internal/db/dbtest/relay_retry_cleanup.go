@@ -17,6 +17,7 @@ func (relayTransientError) Error() string    { return "retry transaction" }
 func (relayTransientError) Code() int        { return 5 }
 func (relayTransientError) SQLState() string { return "40001" }
 
+// RunRelayRetryCleanup checks host cleanup before a relay transaction retry.
 func RunRelayRetryCleanup(t *testing.T, store db.Storage) {
 	fixture := NewRelaySharedAccessFixture(t, store)
 	binding := fixture.Grant.Enrollment.RelayBindingUID
