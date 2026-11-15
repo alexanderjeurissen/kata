@@ -30,10 +30,11 @@ func StripCrossProjectLinkAdditions(event FoldEvent, policy RelayLinkPolicy) (Fo
 	blocked := func(peer string) bool {
 		return policy.CrossProject(peer) && (!policy.RootOrigin || !policy.SameRoot(peer))
 	}
+	blockedRemoval := func(peer string) bool { return !policy.RootOrigin && policy.CrossProject(peer) }
 	switch event.Type {
 	case "issue.linked", "issue.unlinked":
 		if event.Type == "issue.unlinked" {
-			return event, true, nil
+			blocked = blockedRemoval
 		}
 		payload := PayloadMap(event.Payload)
 		for _, key := range []string{"from_uid", "to_uid", "from_issue_uid", "to_issue_uid"} {
@@ -48,7 +49,7 @@ func StripCrossProjectLinkAdditions(event FoldEvent, policy RelayLinkPolicy) (Fo
 	case "issue.created", "issue.snapshot":
 		return stripCreationLinks(event, blocked)
 	case "issue.links_changed":
-		return stripLinksChangedAdditions(event, blocked)
+		return stripLinksChangedAdditions(event, blocked, blockedRemoval)
 	}
 	return event, true, nil
 }
@@ -82,11 +83,15 @@ func stripCreationLinks(event FoldEvent, crossProject func(string) bool) (FoldEv
 	return rewritePayload(event, payload, "links", kept)
 }
 
-func stripLinksChangedAdditions(event FoldEvent, crossProject func(string) bool) (FoldEvent, bool, error) {
+func stripLinksChangedAdditions(event FoldEvent, crossProject, blockedRemoval func(string) bool) (FoldEvent, bool, error) {
 	payload := PayloadMap(event.Payload)
 	changed := false
 	if parent, ok := StringValue(payload["parent_set_uid"]); ok && crossProject(parent) {
 		delete(payload, "parent_set_uid")
+		changed = true
+	}
+	if parent, ok := StringValue(payload["parent_removed_uid"]); ok && blockedRemoval(parent) {
+		delete(payload, "parent_removed_uid")
 		changed = true
 	}
 	for _, entry := range []struct {
@@ -94,6 +99,7 @@ func stripLinksChangedAdditions(event FoldEvent, crossProject func(string) bool)
 		blocked func(string) bool
 	}{
 		{"blocks_added_uids", crossProject}, {"blocked_by_added_uids", crossProject}, {"related_added_uids", crossProject},
+		{"blocks_removed_uids", blockedRemoval}, {"blocked_by_removed_uids", blockedRemoval}, {"related_removed_uids", blockedRemoval},
 	} {
 		key := entry.key
 		added := StringSlice(payload[key])
@@ -198,6 +204,14 @@ type RelayFoldAuthority struct {
 	Projects map[string]string
 	Roots    map[string]string
 	Groups   map[string]map[string]bool
+	Relayed  map[string]bool
+}
+
+// AllowParentRemoval preserves a root crossing against a replica's edit.
+func (a RelayFoldAuthority) AllowParentRemoval(child, parent string, previous, next FoldClock) bool {
+	project, peer := a.Projects[child], a.Projects[parent]
+	root := a.Roots[project]
+	return (!a.Relayed[project] && !a.Relayed[peer]) || project == "" || peer == "" || project == peer || root == "" || a.Roots[peer] != root || !a.Groups[project][peer] || previous.OriginInstanceUID != root || next.OriginInstanceUID == root
 }
 
 // Policy filters one relay event using the endpoint's current membership.

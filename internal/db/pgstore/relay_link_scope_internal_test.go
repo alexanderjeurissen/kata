@@ -7,16 +7,11 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kata/internal/db"
-	"go.kenn.io/kata/internal/testenv"
 )
 
 func TestRelayLinkEndpointProjectsScopesReferences(t *testing.T) {
 	ctx := t.Context()
-	dsn, cleanup := testenv.NewPostgresContainer(t, ctx)
-	t.Cleanup(cleanup)
-	store, err := Open(ctx, dsn)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = store.Close() })
+	store := openUIStore(t)
 	project, err := store.CreateProject(ctx, "scope-project")
 	require.NoError(t, err)
 	source, _, err := store.CreateIssue(ctx, db.CreateIssueParams{ProjectID: project.ID, Title: "Source", Author: "tester"})

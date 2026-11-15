@@ -42,7 +42,11 @@ func RunDirectParentConflict(t *testing.T, store db.Storage) {
 			event := newRemoteEvent(t, fixture.project, &child.UID, "issue.links_changed", "member", spoke, time.Now().UnixMilli()+10, jsontext.Value(`{"parent_set_uid":"`+local.UID+`","parent_removed_uid":"`+foreign.UID+`"}`))
 			_, err = store.IngestFederationEvents(db.WithAuthorizedProjects(ctx, []string{fixture.project.UID, fixture.sibling.UID}), db.FederationIngestParams{ProjectID: fixture.project.ID, SpokeInstanceUID: spoke, Events: []db.FederationIngestEvent{{SourceEventID: 1, Event: event}}})
 			require.NoError(t, err)
-			require.Equal(t, []string{local.UID}, linkTargetUIDs(t, store, child.ID))
+			want := foreign.UID
+			if revoked {
+				want = local.UID
+			}
+			require.Equal(t, []string{want}, linkTargetUIDs(t, store, child.ID))
 		})
 	}
 }
@@ -71,7 +75,7 @@ func RunRelayCrossProjectRemoval(t *testing.T, store db.Storage) {
 	require.NoError(t, err)
 	_, err = store.AcceptRelayDeliveries(db.WithRootAttribution(ctx, fixture.signer, "relay-member"), grant.Enrollment.RelayBindingUID, db.RelayBatch{Stream: db.RelayStreamEvent, Envelopes: []db.RelayEnvelope{envelope}})
 	require.NoError(t, err)
-	require.Empty(t, linkTargetUIDs(t, store, child.ID))
+	require.Equal(t, []string{peer.UID}, linkTargetUIDs(t, store, child.ID))
 }
 
 // RunRelayOffersLegacyIngestedEvents covers a direct spoke's creation followed

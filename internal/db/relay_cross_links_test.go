@@ -85,7 +85,7 @@ func TestRelayCrossLinkPolicy(t *testing.T) {
 	event.Type = "issue.unlinked"
 	_, keep, err = db.StripCrossProjectLinkAdditions(event, authority.Policy(event))
 	require.NoError(t, err)
-	require.True(t, keep)
+	require.False(t, keep)
 	event.Type = "issue.linked"
 	_, keep, err = db.StripCrossProjectLinkAdditions(event, authority.Policy(event))
 	require.NoError(t, err)

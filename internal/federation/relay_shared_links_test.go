@@ -53,9 +53,7 @@ func TestRelaySharedLinksAcrossHops(t *testing.T) {
 					for position, i := range order {
 						syncRelayMatrixNode(t, nodes[i])
 						if position == 0 && i == 0 {
-							local, err := nodes[0].store.IssueByUID(ctx, issues[0].UID, db.IncludeDeletedYes)
-							require.NoError(t, err)
-							links, err := nodes[0].store.LinksByIssue(ctx, local.ID)
+							links, err := nodes[0].store.LinksByIssue(ctx, issueIDForRelayMatrix(t, nodes[0], issues[0].UID))
 							require.NoError(t, err)
 							require.Empty(t, links)
 						}
@@ -67,9 +65,7 @@ func TestRelaySharedLinksAcrossHops(t *testing.T) {
 					require.Len(t, stored, 1)
 					require.Equal(t, linkEvent.ContentHash, stored[0].ContentHash)
 					require.Equal(t, linkEvent.Payload, stored[0].Payload)
-					local, err := nodes[0].store.IssueByUID(ctx, issues[0].UID, db.IncludeDeletedYes)
-					require.NoError(t, err)
-					links, err := nodes[0].store.LinksByIssue(ctx, local.ID)
+					links, err := nodes[0].store.LinksByIssue(ctx, issueIDForRelayMatrix(t, nodes[0], issues[0].UID))
 					require.NoError(t, err)
 					require.Len(t, links, 1)
 					require.Equal(t, issues[1].UID, links[0].ToIssueUID)
@@ -83,9 +79,7 @@ func TestRelaySharedLinksAcrossHops(t *testing.T) {
 					for _, i := range order {
 						syncRelayMatrixNode(t, nodes[i])
 					}
-					local, err := nodes[0].store.IssueByUID(ctx, issues[0].UID, db.IncludeDeletedYes)
-					require.NoError(t, err)
-					links, err := nodes[0].store.LinksByIssue(ctx, local.ID)
+					links, err := nodes[0].store.LinksByIssue(ctx, issueIDForRelayMatrix(t, nodes[0], issues[0].UID))
 					require.NoError(t, err)
 					require.Empty(t, links)
 				}

@@ -157,23 +157,23 @@ func filterRelayCrossProjectLinkEvents(
 	tx *sql.Tx,
 	projectIDs []int64,
 	events []db.FoldEvent,
-) ([]db.FoldEvent, relayOriginClassifier, error) {
+) ([]db.FoldEvent, db.FoldParentRemovalCheck, relayOriginClassifier, error) {
 	if len(projectIDs) == 0 {
-		return events, relayOriginClassifier{}, nil
+		return events, nil, relayOriginClassifier{}, nil
 	}
 	classifier, err := loadRelayOriginClassifier(ctx, tx, projectIDs)
 	if err != nil {
-		return nil, classifier, err
+		return nil, nil, classifier, err
 	}
 	issueProjects, err := relayLinkEndpointProjects(ctx, tx, events)
 	if err != nil {
-		return nil, classifier, err
+		return nil, nil, classifier, err
 	}
-	filtered, err := filterRelayLinkEvents(ctx, tx, events, classifier, issueProjects)
-	return filtered, classifier, err
+	filtered, check, err := filterRelayLinkEvents(ctx, tx, events, classifier, issueProjects)
+	return filtered, check, classifier, err
 }
 
-func filterRelayLinkEvents(ctx context.Context, tx *sql.Tx, events []db.FoldEvent, classifier relayOriginClassifier, issueProjects map[string]string) ([]db.FoldEvent, error) {
+func filterRelayLinkEvents(ctx context.Context, tx *sql.Tx, events []db.FoldEvent, classifier relayOriginClassifier, issueProjects map[string]string) ([]db.FoldEvent, db.FoldParentRemovalCheck, error) {
 	for _, event := range events {
 		if event.IssueUID != "" && issueProjects[event.IssueUID] == "" {
 			issueProjects[event.IssueUID] = event.ProjectUID
@@ -181,7 +181,7 @@ func filterRelayLinkEvents(ctx context.Context, tx *sql.Tx, events []db.FoldEven
 	}
 	authority, err := relayFoldAuthorityTx(ctx, tx, issueProjects, classifier.instanceUID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	filtered := make([]db.FoldEvent, 0, len(events))
 	for _, event := range events {
@@ -192,13 +192,13 @@ func filterRelayLinkEvents(ctx context.Context, tx *sql.Tx, events []db.FoldEven
 		policy := authority.Policy(event)
 		stripped, keep, err := db.StripCrossProjectLinkAdditions(event, policy)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if keep {
 			filtered = append(filtered, stripped)
 		}
 	}
-	return filtered, nil
+	return filtered, authority.AllowParentRemoval, nil
 }
 
 // relayLinkEndpointProjects resolves only issue UIDs referenced by this fold.
@@ -252,7 +252,7 @@ func relayLinkEndpointProjects(ctx context.Context, tx *sql.Tx, events []db.Fold
 
 // relayFoldAuthorityTx loads live project membership for relay link folding.
 func relayFoldAuthorityTx(ctx context.Context, tx *sql.Tx, owners map[string]string, instance string) (db.RelayFoldAuthority, error) {
-	a := db.RelayFoldAuthority{Projects: owners, Roots: map[string]string{}, Groups: map[string]map[string]bool{}}
+	a := db.RelayFoldAuthority{Projects: owners, Roots: map[string]string{}, Groups: map[string]map[string]bool{}, Relayed: map[string]bool{}}
 	ids := map[string]int64{}
 	uids := map[int64]string{}
 	for _, uid := range owners {
@@ -273,6 +273,11 @@ func relayFoldAuthorityTx(ctx context.Context, tx *sql.Tx, owners map[string]str
 		ids[uid], uids[id] = id, uid
 	}
 	for uid, id := range ids {
+		var relayed bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM federation_bindings b WHERE b.project_id=? AND (b.relay_config IS NOT NULL OR EXISTS(SELECT 1 FROM federation_enrollments e WHERE e.project_id=b.project_id AND e.relay_protocol_version=1 AND e.revoked_at IS NULL)))`, id).Scan(&relayed); err != nil {
+			return a, err
+		}
+		a.Relayed[uid] = relayed
 		binding, err := scanFederationBinding(tx.QueryRowContext(ctx, federationBindingSelect+` WHERE project_id=?`, id))
 		if errors.Is(err, db.ErrNotFound) {
 			continue
