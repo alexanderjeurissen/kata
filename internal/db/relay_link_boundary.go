@@ -9,9 +9,10 @@ import (
 
 // RelayLinkPolicy decides which cross-project link mutations may be folded.
 type RelayLinkPolicy struct {
-	RootOrigin   bool
-	SameRoot     func(string) bool
-	CrossProject func(string) bool
+	RootOrigin     bool
+	AllowAdditions bool
+	SameRoot       func(string) bool
+	CrossProject   func(string) bool
 }
 
 // RelayLinkAdditionPayload excludes removals from link admission checks.
@@ -28,7 +29,7 @@ func RelayLinkAdditionPayload(event RemoteEvent) map[string]jsontext.Value {
 // StripCrossProjectLinkAdditions excludes links outside the relay's authority.
 func StripCrossProjectLinkAdditions(event FoldEvent, policy RelayLinkPolicy) (FoldEvent, bool, error) {
 	blocked := func(peer string) bool {
-		return policy.CrossProject(peer) && (!policy.RootOrigin || !policy.SameRoot(peer))
+		return !policy.AllowAdditions && policy.CrossProject(peer) && (!policy.RootOrigin || !policy.SameRoot(peer))
 	}
 	blockedRemoval := func(peer string) bool { return !policy.RootOrigin && policy.CrossProject(peer) }
 	switch event.Type {
@@ -158,7 +159,7 @@ func ValidateLegacyRelayAdmission(ctx context.Context, event RemoteEvent, uidCro
 	switch event.Type {
 	case "issue.linked", "issue.links_changed", "issue.created", "issue.snapshot":
 		fold := FoldEvent{UID: event.EventUID, Type: event.Type, Payload: event.Payload}
-		// Admission inspects additions only; direct-spoke removals remain valid.
+		// Admission inspects additions; folding applies the removal policy.
 		if _, _, err := StripCrossProjectLinkAdditions(fold, RelayLinkPolicy{RootOrigin: true, CrossProject: checkUID, SameRoot: func(string) bool { return false }}); err != nil {
 			return err
 		}

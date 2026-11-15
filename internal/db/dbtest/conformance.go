@@ -120,6 +120,10 @@ var storageScenarios = []scenario{
 		RunRelayCrossLinkResetHistory(t, store, backend)
 		return nil
 	}},
+	{name: "relay replace archived parent", run: func(t *testing.T, store db.Storage) error {
+		RunRelayReplaceArchivedParent(t, store)
+		return nil
+	}},
 	{name: "relay checkpoint capacity", methods: []string{"CreateAPIToken", "CreateIssue", "CreateProject", "CreateRelayEnrollment", "ListFederationEnrollments", "PinRootAuthority", "UpsertFederationBinding"}, runWithBackend: func(t *testing.T, _ db.Storage, backend Backend) error {
 		RunRelayCheckpointCapacity(t, backend)
 		return nil

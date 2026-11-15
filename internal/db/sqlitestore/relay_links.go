@@ -185,11 +185,20 @@ func filterRelayLinkEvents(ctx context.Context, tx *sql.Tx, events []db.FoldEven
 	}
 	filtered := make([]db.FoldEvent, 0, len(events))
 	for _, event := range events {
-		if !classifier.relaySourced(event) {
+		relay := classifier.relaySourced(event)
+		legacyRemoval := !relay && event.OriginInstanceUID != classifier.instanceUID
+		if !relay && !legacyRemoval {
 			filtered = append(filtered, event)
 			continue
 		}
 		policy := authority.Policy(event)
+		policy.AllowAdditions = legacyRemoval
+		if legacyRemoval {
+			crosses := policy.CrossProject
+			policy.CrossProject = func(uid string) bool {
+				return crosses(uid) && (authority.Relayed[event.ProjectUID] || authority.Relayed[authority.Projects[uid]])
+			}
+		}
 		stripped, keep, err := db.StripCrossProjectLinkAdditions(event, policy)
 		if err != nil {
 			return nil, nil, err

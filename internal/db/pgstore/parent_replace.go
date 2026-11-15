@@ -34,9 +34,6 @@ func (s *Store) ReplaceParentAndEvents(
 		); err != nil {
 			return err
 		}
-		if err := ensureRelayLinkBoundaryTx(ctx, tx, input.Link.FromIssueID, input.ExpectedParentIssueID); err != nil {
-			return err
-		}
 		if err := ensureRelayLinkBoundaryTx(ctx, tx, input.Link.FromIssueID, input.Link.ToIssueID); err != nil {
 			return err
 		}
@@ -68,6 +65,9 @@ func (s *Store) ReplaceParentAndEvents(
 		}
 		if oldLink.ID != input.ExpectedParentLinkID || oldLink.ToIssueID != input.ExpectedParentIssueID {
 			return db.ErrParentMismatch
+		}
+		if err := ensureRelayLinkRemovalBoundaryTx(ctx, tx, oldLink, eventIssue); err != nil {
+			return err
 		}
 
 		actor := input.LinkEvent.Actor
@@ -109,6 +109,7 @@ func (s *Store) ReplaceParentAndEvents(
 			"link_id": oldLink.ID, "type": oldLink.Type,
 			"from_short_id": input.UnlinkEvent.FromShortID, "from_uid": input.UnlinkEvent.FromUID,
 			"to_short_id": input.UnlinkEvent.ToShortID, "to_uid": input.UnlinkEvent.ToUID,
+			"link_from_uid": oldLink.FromIssueUID, "link_to_uid": oldLink.ToIssueUID,
 			"updated_at": updatedAt,
 		})
 		if err != nil {

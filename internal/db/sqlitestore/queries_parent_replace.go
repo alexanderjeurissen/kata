@@ -46,9 +46,6 @@ func (d *Store) replaceParentAndEventsTx(
 	); err != nil {
 		return result, err
 	}
-	if err := ensureRelayLinkBoundaryTx(ctx, tx, input.Link.FromIssueID, input.ExpectedParentIssueID); err != nil {
-		return result, err
-	}
 	if err := ensureRelayLinkBoundaryTx(ctx, tx, input.Link.FromIssueID, input.Link.ToIssueID); err != nil {
 		return result, err
 	}
@@ -76,6 +73,9 @@ func (d *Store) replaceParentAndEventsTx(
 
 	eventIssue, projectName, err := lookupIssueForEvent(ctx, tx, input.Link.FromIssueID)
 	if err != nil {
+		return result, err
+	}
+	if err := ensureRelayLinkRemovalBoundaryTx(ctx, tx, oldLink, eventIssue); err != nil {
 		return result, err
 	}
 	actor := input.LinkEvent.Actor
@@ -120,6 +120,7 @@ func (d *Store) replaceParentAndEventsTx(
 		"link_id": oldLink.ID, "type": oldLink.Type,
 		"from_short_id": input.UnlinkEvent.FromShortID, "from_uid": input.UnlinkEvent.FromUID,
 		"to_short_id": input.UnlinkEvent.ToShortID, "to_uid": input.UnlinkEvent.ToUID,
+		"link_from_uid": oldLink.FromIssueUID, "link_to_uid": oldLink.ToIssueUID,
 		"updated_at": updatedAt,
 	})
 	if err != nil {
