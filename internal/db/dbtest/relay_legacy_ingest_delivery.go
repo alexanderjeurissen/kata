@@ -12,7 +12,7 @@ import (
 	"go.kenn.io/kata/internal/uid"
 )
 
-// RunDirectParentConflict keeps ordinary direct peers on last-writer-wins folding.
+// RunDirectParentConflict checks direct peer parent edits before and after relay revocation.
 func RunDirectParentConflict(t *testing.T, store db.Storage) {
 	for _, revoked := range []bool{false, true} {
 		t.Run(map[bool]string{false: "active relay", true: "revoked relay"}[revoked], func(t *testing.T) {
