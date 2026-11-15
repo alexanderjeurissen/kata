@@ -77,30 +77,19 @@ func TestRelayCrossLinkPolicy(t *testing.T) {
 		Roots:    map[string]string{"a": "root", "b": "root"},
 		Groups:   map[string]map[string]bool{"a": {"b": true}},
 	}
-	event := db.FoldEvent{UID: "event", ProjectUID: "a", IssueUID: child, OriginInstanceUID: "root", Type: "issue.linked", Payload: jsontext.Value(`{"from_uid":"child","to_uid":"peer","type":"blocks"}`)}
-	_, keep, err := db.StripCrossProjectLinkAdditions(event, authority.Policy(event))
-	require.NoError(t, err)
-	require.True(t, keep)
+	event := db.FoldEvent{ProjectUID: "a", OriginInstanceUID: "root"}
+	policy := authority.Policy(event)
+	require.True(t, policy.RootOrigin)
+	require.True(t, policy.CrossProject(peer))
+	require.False(t, policy.CrossProject(child))
+	require.False(t, policy.CrossProject("unknown"))
+	require.True(t, policy.SameRoot(peer))
+
 	authority.Roots["b"] = "other"
-	_, keep, err = db.StripCrossProjectLinkAdditions(event, authority.Policy(event))
-	require.NoError(t, err)
-	require.False(t, keep)
+	require.False(t, authority.Policy(event).SameRoot(peer))
 	authority.Roots["b"] = "root"
 	authority.Groups["a"]["b"] = false
-	_, keep, err = db.StripCrossProjectLinkAdditions(event, authority.Policy(event))
-	require.NoError(t, err)
-	require.False(t, keep)
-	authority.Groups["a"]["b"] = true
+	require.False(t, authority.Policy(event).SameRoot(peer))
 	event.OriginInstanceUID = "replica"
-	_, keep, err = db.StripCrossProjectLinkAdditions(event, authority.Policy(event))
-	require.NoError(t, err)
-	require.False(t, keep)
-	event.Type = "issue.unlinked"
-	_, keep, err = db.StripCrossProjectLinkAdditions(event, authority.Policy(event))
-	require.NoError(t, err)
-	require.False(t, keep)
-	event.OriginInstanceUID = "root"
-	_, keep, err = db.StripCrossProjectLinkAdditions(event, authority.Policy(event))
-	require.NoError(t, err)
-	require.True(t, keep)
+	require.False(t, authority.Policy(event).RootOrigin)
 }
