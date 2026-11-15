@@ -2842,6 +2842,7 @@ func (o *PollProjectEventsRequestOptions) GetHeader() (map[string]string, error)
 type GetProjectFederationRequestOptions struct {
 	PathParams *GetProjectFederationPath
 	Query      *GetProjectFederationQuery
+	Header     *GetProjectFederationHeaders
 }
 
 // Validate validates all the fields in the options.
@@ -2861,6 +2862,14 @@ func (o *GetProjectFederationRequestOptions) Validate() error {
 		if v, ok := any(o.Query).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append("Query", err)
+			}
+		}
+	}
+
+	if o.Header != nil {
+		if v, ok := any(o.Header).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Header", err)
 			}
 		}
 	}
@@ -2888,7 +2897,7 @@ func (o *GetProjectFederationRequestOptions) GetBody() any {
 
 // GetHeader returns the headers as a map.
 func (o *GetProjectFederationRequestOptions) GetHeader() (map[string]string, error) {
-	return nil, nil
+	return runtime.AsMap[string](o.Header)
 }
 
 // EnableProjectFederationRequestOptions is the options needed to make a request to EnableProjectFederation.
