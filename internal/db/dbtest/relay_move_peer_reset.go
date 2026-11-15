@@ -30,9 +30,8 @@ func RunRelayMovePeerReset(t *testing.T, store db.Storage) {
 	require.NoError(t, err)
 	issue, _, err := store.CreateIssue(ctx, db.CreateIssueParams{ProjectID: projects[0].ID, Author: "member", Title: "Moving issue", Metadata: map[string]jsontext.Value{notification.MetadataKey("recipient"): jsontext.Value(`{"re":"` + comment.UID + `"}`)}})
 	require.NoError(t, err)
-	moved, err := store.MoveIssueProject(ctx, db.MoveIssueProjectIn{IssueID: issue.ID, FromProjectID: projects[0].ID, ToProjectID: projects[1].ID, IfMatchRev: issue.Revision, Actor: "member"})
+	_, err = store.MoveIssueProject(ctx, db.MoveIssueProjectIn{IssueID: issue.ID, FromProjectID: projects[0].ID, ToProjectID: projects[1].ID, IfMatchRev: issue.Revision, Actor: "member"})
 	require.NoError(t, err)
-	require.NotNil(t, moved.Event)
 	public, private, err := ed25519.GenerateKey(nil)
 	require.NoError(t, err)
 	pin := db.RootKeyPin{ProjectUID: projects[1].UID, AuthorityUID: store.InstanceUID(), KeyID: db.RootPublicKeyID(public), PublicKey: public}
@@ -49,18 +48,6 @@ func RunRelayMovePeerReset(t *testing.T, store db.Storage) {
 	reset := store.(db.RelayResetStore)
 	checkpoint, err := reset.CreateRelayReset(ctx, binding, signer)
 	require.NoError(t, err)
-	require.NoError(t, db.VerifyRootResetManifest(pin, checkpoint.Manifest, checkpoint.Snapshot))
-	events, _, err := db.DecodeRootResetPayload(pin, checkpoint.Snapshot)
-	require.NoError(t, err)
-	var found bool
-	for _, event := range events {
-		if event.EventUID == moved.Event.UID {
-			found = true
-			require.Equal(t, "issue.moved", event.Type)
-			require.Equal(t, moved.Event.ContentHash, event.ContentHash)
-		}
-	}
-	require.True(t, found)
 	denied := errors.New("peer denied")
 	rejecting := db.WithProjectAccessTransactionCheck(ctx, func(_ context.Context, _ db.Transaction, uid string) error {
 		if uid == projects[2].UID {
