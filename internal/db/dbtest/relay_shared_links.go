@@ -1,11 +1,15 @@
 package dbtest
 
 import (
+	"context"
 	"crypto/ed25519"
+	"encoding/json/jsontext"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kata/internal/db"
+	"go.kenn.io/kata/internal/notification"
 )
 
 // RelaySharedAccessFixture is one native root and its common-audience pair.
@@ -16,6 +20,56 @@ type RelaySharedAccessFixture struct {
 	Linked   db.Event
 	Team     db.Team
 	Signer   db.RootAttributionSigner
+}
+
+// RunRelayMoveSnapshotPeerAccess checks access before offering a moved issue snapshot.
+func RunRelayMoveSnapshotPeerAccess(t *testing.T, store db.Storage) {
+	ctx := t.Context()
+	fixture := NewRelaySharedAccessFixture(t, store)
+	require.NoError(t, store.RevokeFederationEnrollment(ctx, fixture.Grant.Enrollment.ID))
+	source, err := store.CreateProject(ctx, "move-source")
+	require.NoError(t, err)
+	_, err = store.UpsertFederationBinding(ctx, db.FederationBinding{ProjectID: source.ID, Role: db.FederationRoleHub, HubProjectID: source.ID, HubProjectUID: source.UID, Enabled: true})
+	require.NoError(t, err)
+	comment, _, err := store.CreateComment(ctx, db.CreateCommentParams{IssueID: fixture.Issues[1].ID, Author: "member", Body: "Peer comment"})
+	require.NoError(t, err)
+	issue, _, err := store.CreateIssue(ctx, db.CreateIssueParams{ProjectID: fixture.Projects[0].ID, Author: "member", Title: "Moved issue"})
+	require.NoError(t, err)
+	patched, err := store.PatchIssueMetadata(ctx, db.PatchIssueMetadataIn{IssueID: issue.ID, Actor: "member", Patch: map[string]jsontext.Value{notification.MetadataKey("recipient"): jsontext.Value(`{"re":"` + comment.UID + `"}`)}})
+	require.NoError(t, err)
+	away, err := store.MoveIssueProject(ctx, db.MoveIssueProjectIn{IssueID: issue.ID, FromProjectID: fixture.Projects[0].ID, ToProjectID: source.ID, IfMatchRev: patched.Issue.Revision, Actor: "member"})
+	require.NoError(t, err)
+	moved, err := store.MoveIssueProject(ctx, db.MoveIssueProjectIn{IssueID: issue.ID, FromProjectID: source.ID, ToProjectID: fixture.Projects[0].ID, IfMatchRev: away.Issue.Revision, Actor: "member"})
+	require.NoError(t, err)
+	require.NotNil(t, moved.Event)
+	require.Contains(t, moved.Event.Payload, comment.UID)
+	grant, err := store.CreateRelayEnrollment(ctx, db.CreateRelayEnrollmentParams{ProjectID: fixture.Projects[0].ID, ParentTokenID: *fixture.Grant.Enrollment.ParentTokenID, SpokeInstanceUID: "00000000000000000000000007", ProtocolVersion: db.RelayProtocolVersion, Token: "move-snapshot-relay-test-token"})
+	require.NoError(t, err)
+	binding := grant.Enrollment.RelayBindingUID
+	features := db.WithRelayPeerEventFeatures(ctx, db.SupportedEventFeatures)
+	for {
+		items, err := store.PendingRelayDeliveries(features, binding, db.RelayStreamEvent, 1)
+		require.NoError(t, err)
+		require.Len(t, items, 1)
+		if items[0].SourceUID == moved.Event.UID {
+			break
+		}
+		require.NoError(t, store.AckRelayDeliveries(ctx, binding, 1, db.RelayStreamEvent, items[0].Sequence, items[0].Digest))
+	}
+	denied := errors.New("peer denied")
+	rejectPeer := db.WithProjectAccessTransactionCheck(features, func(_ context.Context, _ db.Transaction, uid string) error {
+		if uid == fixture.Projects[1].UID {
+			return denied
+		}
+		return nil
+	})
+	out, err := store.PendingRelayDeliveries(rejectPeer, binding, db.RelayStreamEvent, 100)
+	require.ErrorIs(t, err, denied)
+	require.Empty(t, out)
+	offered, err := store.PendingRelayDeliveries(features, binding, db.RelayStreamEvent, 100)
+	require.NoError(t, err)
+	require.NotEmpty(t, offered)
+	require.Equal(t, moved.Event.UID, offered[len(offered)-1].SourceUID)
 }
 
 // NewRelaySharedAccessFixture enrolls the same native pair for storage and
