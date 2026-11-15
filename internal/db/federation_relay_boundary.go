@@ -71,7 +71,7 @@ func RelayEventPeerProjects(event RemoteEvent, lookup *EventIssueLookup, visit f
 	case "issue.linked", "issue.unlinked":
 		var payload map[string]jsontext.Value
 		if json.Unmarshal(event.Payload, &payload) == nil {
-			for _, key := range []string{"from_uid", "to_uid", "from_issue_uid", "to_issue_uid"} {
+			for _, key := range []string{"from_uid", "to_uid"} {
 				if uid, ok := StringValue(payload[key]); ok && uid != "" {
 					if _, err := issueUID(uid); err != nil {
 						return err

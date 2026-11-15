@@ -36,7 +36,7 @@ func TestRelayEventPeerProjects(t *testing.T) {
 	}{
 		{"linked", "issue.linked", `{}`, &related, true},
 		{"linked payload", "issue.linked", `{"from_uid":"` + issueUID + `","to_uid":"` + issueUID + `"}`, nil, true},
-		{"unlinked payload", "issue.unlinked", `{"from_issue_uid":"` + issueUID + `","to_issue_uid":"` + issueUID + `"}`, nil, true},
+		{"unlinked payload", "issue.unlinked", `{"from_uid":"` + issueUID + `","to_uid":"` + issueUID + `"}`, nil, true},
 		{"created", "issue.created", `{"links":[{"to_issue_uid":"` + issueUID + `"}]}`, nil, true},
 		{"comment reply", "issue.commented", `{"reply_to_uid":"` + commentUID + `","reply_kind":"reply"}`, nil, true},
 		{"missing comment reply", "issue.commented", `{"reply_to_uid":"00000000000000000000000003","reply_kind":"reply"}`, nil, false},
