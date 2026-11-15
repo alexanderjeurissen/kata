@@ -160,13 +160,22 @@ func (d *Store) relayReadAuthority(ctx context.Context, e db.FederationEnrollmen
 }
 
 func (d *Store) relayTx(ctx context.Context, op func(*sql.Tx) error) error {
-	return d.RetryTransient(ctx, func() error {
+	return db.RetryTransient(ctx, func(err error) bool { return !errors.Is(err, db.ErrTransactionFinalizationFailed) && IsTransient(err) }, func() error {
 		tx, err := d.BeginTx(ctx, nil)
 		if err != nil {
 			return err
 		}
 		defer func() { _ = tx.Rollback() }()
 		if err := op(tx); err != nil {
+			if IsTransient(err) {
+				rollbackErr := tx.Rollback()
+				if db.HasTransactionRollbackCallback(err) {
+					return db.FinishTransactionRollback(ctx, err, rollbackErr)
+				}
+				if rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
+					return errors.Join(db.ErrTransactionFinalizationFailed, err, rollbackErr)
+				}
+			}
 			return err
 		}
 		return tx.Commit()

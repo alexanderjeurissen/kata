@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+
+	"go.kenn.io/kata/internal/db"
 )
 
 type transactionFunc func(*sql.Tx) error
@@ -23,17 +25,29 @@ func (s *Store) withTx(ctx context.Context, isolation sql.IsolationLevel, operat
 	if operation == nil {
 		return errors.New("postgres transaction operation is required")
 	}
-	err := s.RetryTransient(ctx, func() error {
+	err := db.RetryTransient(ctx, func(err error) bool { return !errors.Is(err, db.ErrTransactionFinalizationFailed) && IsTransient(err) }, func() error {
 		tx, err := s.BeginTx(ctx, &sql.TxOptions{Isolation: isolation})
 		if err != nil {
 			return err
 		}
 		defer func() { _ = tx.Rollback() }()
 		if err := operation(tx); err != nil {
+			if IsTransient(err) {
+				rollbackErr := tx.Rollback()
+				if db.HasTransactionRollbackCallback(err) {
+					return db.FinishTransactionRollback(ctx, err, rollbackErr)
+				}
+				if rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
+					return errors.Join(db.ErrTransactionFinalizationFailed, err, rollbackErr)
+				}
+			}
 			return err
 		}
 		return tx.Commit()
 	})
+	if errors.Is(err, db.ErrTransactionFinalizationFailed) {
+		return errors.Join(db.ErrTransactionFinalizationFailed, mapSQLError(err, nil))
+	}
 	return mapSQLError(err, nil)
 }
 

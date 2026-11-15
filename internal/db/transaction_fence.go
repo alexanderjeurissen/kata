@@ -24,8 +24,11 @@ type TransactionFence func(context.Context, Transaction) error
 var ErrTransactionFinalizationFailed = errors.New("transaction finalization unavailable")
 
 type afterRollbackError struct {
-	cause  error
-	finish func(context.Context) error
+	cause       error
+	finish      func(context.Context) error
+	finishOnce  sync.Once
+	observeOnce sync.Once
+	finishErr   error
 }
 
 func (e *afterRollbackError) Error() string { return e.cause.Error() }
@@ -39,6 +42,12 @@ func AfterTransactionRollback(cause error, finish func(context.Context) error) e
 	return &afterRollbackError{cause: cause, finish: finish}
 }
 
+// HasTransactionRollbackCallback reports whether an error carries host cleanup.
+func HasTransactionRollbackCallback(err error) bool {
+	rejected, ok := errors.AsType[*afterRollbackError](err)
+	return ok && rejected.finish != nil
+}
+
 // FinishTransactionRollback runs only after the store has rolled back and
 // returned its connection. Callback failure never permits the rejected write.
 func FinishTransactionRollback(ctx context.Context, cause, rollbackErr error) error {
@@ -46,14 +55,20 @@ func FinishTransactionRollback(ctx context.Context, cause, rollbackErr error) er
 		rollbackErr = nil
 	}
 	var finishErr error
-	if rejected, ok := errors.AsType[*afterRollbackError](cause); ok && rejected.finish != nil {
-		finishErr = rejected.finish(ctx)
+	rejected, hasCallback := errors.AsType[*afterRollbackError](cause)
+	if hasCallback && rejected.finish != nil {
+		rejected.finishOnce.Do(func() { rejected.finishErr = rejected.finish(ctx) })
+		finishErr = rejected.finishErr
 	}
 	if rollbackErr != nil || finishErr != nil {
 		cause = errors.Join(ErrTransactionFinalizationFailed, cause, rollbackErr, finishErr)
 	}
 	if observe, _ := ctx.Value(transactionRollbackObserverKey{}).(func(error)); observe != nil {
-		observe(cause)
+		if hasCallback && rejected.finish != nil {
+			rejected.observeOnce.Do(func() { observe(cause) })
+		} else {
+			observe(cause)
+		}
 	}
 	return cause
 }

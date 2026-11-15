@@ -159,6 +159,8 @@ var storageScenarios = []scenario{
 	}},
 	{name: "direct parent conflict", run: func(t *testing.T, store db.Storage) error { RunDirectParentConflict(t, store); return nil }},
 	{name: "relay cross project removal", run: func(t *testing.T, store db.Storage) error { RunRelayCrossProjectRemoval(t, store); return nil }},
+	{name: "relay move peer reset", run: func(t *testing.T, store db.Storage) error { RunRelayMovePeerReset(t, store); return nil }},
+	{name: "relay retry cleanup", run: func(t *testing.T, store db.Storage) error { RunRelayRetryCleanup(t, store); return nil }},
 	{name: "relay offers legacy ingested events", methods: []string{"IngestFederationEvents", "PendingRelayDeliveries", "PatchIssueMetadata"}, run: func(t *testing.T, store db.Storage) error {
 		RunRelayOffersLegacyIngestedEvents(t, store)
 		return nil

@@ -1,11 +1,8 @@
 package db
 
 import (
-	"context"
 	"encoding/json/jsontext"
-	"errors"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kata/internal/notification"
@@ -41,7 +38,6 @@ func TestRelayEventPeerProjects(t *testing.T) {
 		{"linked payload", "issue.linked", `{"from_uid":"` + issueUID + `","to_uid":"` + issueUID + `"}`, nil, true},
 		{"unlinked payload", "issue.unlinked", `{"from_issue_uid":"` + issueUID + `","to_issue_uid":"` + issueUID + `"}`, nil, true},
 		{"created", "issue.created", `{"links":[{"to_issue_uid":"` + issueUID + `"}]}`, nil, true},
-		{"moved snapshot notification", "issue.moved", `{"from_project_uid":"source","to_project_uid":"own","snapshot":{"metadata":{"` + notification.MetadataKey("recipient") + `":{"re":"` + commentUID + `"}}}}`, nil, true},
 		{"comment reply", "issue.commented", `{"reply_to_uid":"` + commentUID + `","reply_kind":"reply"}`, nil, true},
 		{"missing comment reply", "issue.commented", `{"reply_to_uid":"00000000000000000000000003","reply_kind":"reply"}`, nil, false},
 		{"snapshot null links before reply", "issue.snapshot", `{"links":null,"comments":[{"reply_to_uid":"` + commentUID + `","reply_kind":"reply"}]}`, nil, true},
@@ -67,40 +63,4 @@ func TestRelayEventPeerProjects(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestAuthorizeRelayReleaseMovedNotification(t *testing.T) {
-	const source = "00000000000000000000000001"
-	const destination = "00000000000000000000000002"
-	const peer = "00000000000000000000000003"
-	const comment = "00000000000000000000000004"
-	issue := "00000000000000000000000005"
-	event := RemoteEvent{
-		EventUID: "00000000000000000000000006", OriginInstanceUID: "00000000000000000000000007",
-		ProjectUID: destination, ProjectName: "destination", IssueUID: &issue, Type: "issue.moved", Actor: "member",
-		HLCPhysicalMS: 1700000000000, CreatedAt: time.UnixMilli(1700000000000).UTC(),
-		Payload: jsontext.Value(`{"issue_uid":"` + issue + `","from_project_uid":"` + source + `","from_short_id":"old1","to_project_uid":"` + destination + `","to_short_id":"new1","snapshot":{"uid":"` + issue + `","title":"Moved issue","author":"member","status":"open","metadata":{"` + notification.MetadataKey("recipient") + `":{"re":"` + comment + `"}}}}`),
-	}
-	var err error
-	event.ContentHash, err = RemoteEventContentHash(event)
-	require.NoError(t, err)
-	body, err := EncodeRelaySourceEvent(event)
-	require.NoError(t, err)
-	retained, err := DecodeRelaySourceEvent(body)
-	require.NoError(t, err)
-	lookup := NewEventIssueLookup(func(string) (Issue, error) { return Issue{ProjectUID: destination}, nil }, nil, func(uid string) (Issue, error) {
-		if uid == comment {
-			return Issue{ProjectUID: peer}, nil
-		}
-		return Issue{}, ErrNotFound
-	})
-	denied := errors.New("peer denied")
-	ctx := WithProjectAccessTransactionCheck(t.Context(), func(_ context.Context, _ Transaction, uid string) error {
-		if uid == peer {
-			return denied
-		}
-		return nil
-	})
-	require.ErrorIs(t, AuthorizeRelayRelease(ctx, nil, lookup, destination, []RemoteEvent{retained}), denied)
-	require.NoError(t, AuthorizeRelayRelease(t.Context(), nil, lookup, destination, []RemoteEvent{retained}))
 }
