@@ -35,8 +35,6 @@ func TestRelayEventPeerProjects(t *testing.T) {
 		peer                bool
 	}{
 		{"linked", "issue.linked", `{}`, &related, true},
-		{"linked payload", "issue.linked", `{"from_uid":"` + issueUID + `","to_uid":"` + issueUID + `"}`, nil, true},
-		{"unlinked payload", "issue.unlinked", `{"from_uid":"` + issueUID + `","to_uid":"` + issueUID + `"}`, nil, true},
 		{"created", "issue.created", `{"links":[{"to_issue_uid":"` + issueUID + `"}]}`, nil, true},
 		{"comment reply", "issue.commented", `{"reply_to_uid":"` + commentUID + `","reply_kind":"reply"}`, nil, true},
 		{"missing comment reply", "issue.commented", `{"reply_to_uid":"00000000000000000000000003","reply_kind":"reply"}`, nil, false},
@@ -46,6 +44,17 @@ func TestRelayEventPeerProjects(t *testing.T) {
 		{"moved snapshot notification", "issue.moved", `{"from_project_uid":"source","to_project_uid":"own","snapshot":{"metadata":{"` + notification.MetadataKey("recipient") + `":{"re":"` + commentUID + `"}}}}`, nil, true},
 		{"diff notification", "issue.metadata_updated", `{"diff":{"` + notification.MetadataKey("recipient") + `":{"from":{"re":"` + commentUID + `"},"to":{}}}}`, nil, true},
 	}
+	t.Run("link payload", func(t *testing.T) {
+		payload := jsontext.Value(`{"from_uid":"` + issueUID + `","to_uid":"` + issueUID + `"}`)
+		for _, kind := range []string{"issue.linked", "issue.unlinked"} {
+			t.Run(kind, func(t *testing.T) {
+				projects := map[string]bool{}
+				err := RelayEventPeerProjects(RemoteEvent{ProjectUID: "own", Type: kind, Payload: payload}, lookup, func(uid string) error { projects[uid] = true; return nil })
+				require.NoError(t, err)
+				require.Contains(t, projects, "peer")
+			})
+		}
+	})
 	t.Run("subject moved to peer", func(t *testing.T) {
 		projects := map[string]bool{}
 		err := RelayEventPeerProjects(RemoteEvent{ProjectUID: "own", Type: "issue.updated", IssueUID: &related, Payload: jsontext.Value(`{}`)}, lookup, func(uid string) error { projects[uid] = true; return nil })
