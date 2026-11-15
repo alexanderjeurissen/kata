@@ -103,4 +103,3 @@ func TestRelayEnrollmentBootstrapCompactedArtifacts(t *testing.T) {
 		return err
 	})
 }
-
