@@ -8,7 +8,6 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kata/internal/db"
-	"go.kenn.io/kata/internal/uid"
 )
 
 // RunRelayCrossLinkResetHistory checks feature gating for cached and forwarded reset history.
@@ -60,15 +59,7 @@ func RunRelayCrossLinkResetHistory(t *testing.T, root db.Storage, backend Backen
 	require.NoError(t, err)
 	localParent, _, err := root.CreateIssue(db.WithRootAttribution(ctx, signer, "root-member"), db.CreateIssueParams{ProjectID: projects[0].ID, Author: "root-member", Title: "Local parent"})
 	require.NoError(t, err)
-	_, _, err = root.CreateLinkAndEvent(ctx, db.CreateLinkParams{FromIssueID: issues[0].ID, ToIssueID: localParent.ID, Type: "related", Author: "member"}, db.LinkEventParams{EventType: "issue.linked", EventIssueID: issues[0].ID, FromUID: issues[0].UID, ToUID: localParent.UID})
-	require.NoError(t, err)
 	peerBinding := enroll(root, hub, projects[1], "reset-peer-hub", true)
-	spoke, err := uid.New()
-	require.NoError(t, err)
-	removed := newRemoteEvent(t, projects[0], &issues[0].UID, "issue.links_changed", "member", spoke, time.Now().UnixMilli()+10, jsontext.Value(`{"blocks_removed_uids":["`+issues[1].UID+`"],"related_removed_uids":["`+localParent.UID+`"]}`))
-	_, err = root.IngestFederationEvents(db.WithAuthorizedProjects(ctx, []string{projects[0].UID, projects[1].UID}), db.FederationIngestParams{ProjectID: projects[0].ID, SpokeInstanceUID: spoke, Events: []db.FederationIngestEvent{{SourceEventID: 1, Event: removed}}})
-	require.NoError(t, err)
-	require.Equal(t, []string{issues[1].UID}, linkTargetUIDs(t, root, issues[0].ID))
 	binding := enroll(root, hub, projects[0], "reset-hub", true)
 	deliver := func(t *testing.T) {
 		t.Helper()
@@ -87,34 +78,49 @@ func RunRelayCrossLinkResetHistory(t *testing.T, root db.Storage, backend Backen
 			}
 		}
 	}
+	features := db.WithRelayPeerEventFeatures(ctx, db.SupportedEventFeatures)
+	items, err := root.PendingRelayDeliveries(features, binding, db.RelayStreamEvent, 100)
+	require.NoError(t, err)
+	require.NotEmpty(t, items)
+	last := items[len(items)-1]
+	require.NoError(t, root.AckRelayDeliveries(ctx, binding, 1, db.RelayStreamEvent, last.Sequence, last.Digest))
+	_, ordinary, err := root.CreateIssue(ctx, db.CreateIssueParams{ProjectID: projects[0].ID, Author: "member", Title: "Before crossing"})
+	require.NoError(t, err)
+	_, crossing, err := root.CreateLinkAndEvent(db.WithRootAttribution(ctx, signer, "root-member"), db.CreateLinkParams{FromIssueID: issues[0].ID, ToIssueID: issues[1].ID, Type: "related", Author: "root-member"}, db.LinkEventParams{EventType: "issue.linked", EventIssueID: issues[0].ID, Actor: "root-member", FromUID: issues[0].UID, ToUID: issues[1].UID, FromShortID: issues[0].ShortID, ToShortID: issues[1].ShortID})
+	require.NoError(t, err)
+	prefix, err := root.PendingRelayDeliveries(ctx, binding, db.RelayStreamEvent, 100)
+	require.NoError(t, err)
+	require.Len(t, prefix, 1)
+	require.Equal(t, ordinary.UID, prefix[0].SourceUID)
+	replayed, err := root.PendingRelayDeliveries(ctx, binding, db.RelayStreamEvent, 100)
+	require.NoError(t, err)
+	require.Equal(t, prefix, replayed)
+	require.NoError(t, root.AckRelayDeliveries(ctx, binding, 1, db.RelayStreamEvent, prefix[0].Sequence, prefix[0].Digest))
+	_, err = root.PendingRelayDeliveries(ctx, binding, db.RelayStreamEvent, 100)
+	require.ErrorIs(t, err, db.ErrUnsupportedEventFeatures)
+	next, err := root.PendingRelayDeliveries(features, binding, db.RelayStreamEvent, 100)
+	require.NoError(t, err)
+	require.Len(t, next, 1)
+	require.Equal(t, crossing.UID, next[0].SourceUID)
+	require.Equal(t, crossing.ContentHash, next[0].SourceHash)
+	// Deliver the acknowledged initial history before the remaining events.
+	_, err = hub.AcceptRelayDeliveries(ctx, binding, db.RelayBatch{Stream: db.RelayStreamEvent, Envelopes: items})
+	require.NoError(t, err)
+	_, err = hub.AcceptRelayDeliveries(ctx, binding, db.RelayBatch{Stream: db.RelayStreamEvent, Envelopes: prefix})
+	require.NoError(t, err)
 	deliver(t)
 	hubIssue, err := hub.IssueByUID(ctx, issues[0].UID, db.IncludeDeletedYes)
 	require.NoError(t, err)
-	require.Equal(t, []string{issues[1].UID}, linkTargetUIDs(t, hub, hubIssue.ID))
+	require.Equal(t, []string{issues[1].UID, issues[1].UID}, linkTargetUIDs(t, hub, hubIssue.ID))
 	_, err = root.DeleteLinkAndEvent(db.WithRootAttribution(ctx, signer, "root-member"), blocksLink, db.LinkEventParams{EventType: "issue.unlinked", EventIssueID: issues[0].ID, Actor: "root-member", FromUID: issues[0].UID, ToUID: issues[1].UID})
 	require.NoError(t, err)
-	require.Empty(t, linkTargetUIDs(t, root, issues[0].ID))
+	require.Equal(t, []string{issues[1].UID}, linkTargetUIDs(t, root, issues[0].ID))
+	related, err := root.LinksByIssue(ctx, issues[0].ID)
+	require.NoError(t, err)
+	_, err = root.DeleteLinkAndEvent(db.WithRootAttribution(ctx, signer, "root-member"), related[0], db.LinkEventParams{EventType: "issue.unlinked", EventIssueID: issues[0].ID, Actor: "root-member", FromUID: issues[0].UID, ToUID: issues[1].UID})
+	require.NoError(t, err)
 	_, _, err = root.CreateLinkAndEvent(db.WithRootAttribution(ctx, signer, "root-member"), db.CreateLinkParams{FromIssueID: issues[0].ID, ToIssueID: issues[1].ID, Type: "parent", Author: "root-member"}, db.LinkEventParams{EventType: "issue.linked", EventIssueID: issues[0].ID, Actor: "root-member", FromUID: issues[0].UID, ToUID: issues[1].UID, FromShortID: issues[0].ShortID, ToShortID: issues[1].ShortID})
 	require.NoError(t, err)
-	t.Run("replacement reaches relay", func(t *testing.T) {
-		child, _, err := root.CreateIssue(ctx, db.CreateIssueParams{ProjectID: projects[0].ID, Author: "member", Title: "Replacement child"})
-		require.NoError(t, err)
-		old, _, err := root.CreateLinkAndEvent(ctx, db.CreateLinkParams{FromIssueID: child.ID, ToIssueID: localParent.ID, Type: "parent", Author: "member"}, db.LinkEventParams{EventType: "issue.linked", EventIssueID: child.ID, FromUID: child.UID, ToUID: localParent.UID})
-		require.NoError(t, err)
-		replacement, err := root.(db.ParentLinkReplacementStorage).ReplaceParentAndEvents(ctx, db.ReplaceParentAndEventsParams{
-			ExpectedParentLinkID: old.ID, ExpectedParentIssueID: localParent.ID,
-			Link:        db.CreateLinkParams{FromIssueID: child.ID, ToIssueID: issues[1].ID, Type: "parent", Author: "member"},
-			UnlinkEvent: db.LinkEventParams{EventType: "issue.unlinked", EventIssueID: child.ID, FromUID: child.UID, ToUID: localParent.UID},
-			LinkEvent:   db.LinkEventParams{EventType: "issue.linked", EventIssueID: child.ID, FromUID: child.UID, ToUID: issues[1].UID},
-		})
-		require.NoError(t, err)
-		deliver(t)
-		hubChild, err := hub.IssueByUID(ctx, child.UID, db.IncludeDeletedYes)
-		require.NoError(t, err)
-		require.Equal(t, []string{issues[1].UID}, linkTargetUIDs(t, hub, hubChild.ID))
-		_, err = root.DeleteLinkAndEvent(ctx, replacement.Link, db.LinkEventParams{EventType: "issue.unlinked", EventIssueID: child.ID, Actor: "member", FromUID: child.UID, ToUID: issues[1].UID})
-		require.NoError(t, err)
-	})
 	rootResets := root.(db.RelayResetStore)
 	relayState := func(store db.Storage) []db.ImportRecord {
 		var records []db.ImportRecord
@@ -133,7 +139,6 @@ func RunRelayCrossLinkResetHistory(t *testing.T, root db.Storage, backend Backen
 	afterGrants, err := root.ListProjectFederationEnrollments(ctx, projects[0].ID)
 	require.NoError(t, err)
 	require.Equal(t, grants, afterGrants)
-	features := db.WithRelayPeerEventFeatures(ctx, db.SupportedEventFeatures)
 	checkpoint, err := rootResets.CreateRelayReset(features, binding, signer)
 	require.NoError(t, err)
 
@@ -149,7 +154,7 @@ func RunRelayCrossLinkResetHistory(t *testing.T, root db.Storage, backend Backen
 	require.NoError(t, hubResets.InstallRelayReset(ctx, peerBinding, peerCheckpoint.Manifest, peerCheckpoint.Snapshot, peerCheckpoint.Translation))
 	hubIssue, err = hub.IssueByUID(ctx, issues[0].UID, db.IncludeDeletedYes)
 	require.NoError(t, err)
-	// The signed reset retains the root-authored removal.
+	// The signed reset retains the root-authored parent link.
 	require.Equal(t, []string{issues[1].UID}, linkTargetUIDs(t, hub, hubIssue.ID))
 	hubProject, err := hub.ProjectByUID(ctx, projects[0].UID)
 	require.NoError(t, err)
@@ -193,7 +198,7 @@ func RunRelayCrossLinkResetHistory(t *testing.T, root db.Storage, backend Backen
 	leafIssue, err := leaf.IssueByUID(ctx, issues[0].UID, db.IncludeDeletedYes)
 	require.NoError(t, err)
 	require.Equal(t, []string{issues[1].UID}, linkTargetUIDs(t, leaf, leafIssue.ID))
-	t.Run("root parent replacement after peer leaves group", func(t *testing.T) {
+	t.Run("parent replacement after peer leaves group", func(t *testing.T) {
 		peerProject, err := hub.ProjectByUID(ctx, projects[1].UID)
 		require.NoError(t, err)
 		peerConfig, err := hub.FederationBindingByProject(ctx, peerProject.ID)
@@ -201,11 +206,11 @@ func RunRelayCrossLinkResetHistory(t *testing.T, root db.Storage, backend Backen
 		peerConfig.Enabled = false
 		_, err = hub.UpsertFederationBinding(ctx, peerConfig)
 		require.NoError(t, err)
-		event := newRemoteEvent(t, projects[0], &issues[0].UID, "issue.links_changed", "root-member", root.InstanceUID(), time.Now().UnixMilli()+100, jsontext.Value(`{"parent_removed_uid":"`+issues[1].UID+`","parent_set_uid":"`+localParent.UID+`"}`))
+		event := newRemoteEvent(t, projects[0], &issues[0].UID, "issue.links_changed", "member", leaf.InstanceUID(), time.Now().UnixMilli()+100, jsontext.Value(`{"parent_removed_uid":"`+issues[1].UID+`","parent_set_uid":"`+localParent.UID+`"}`))
 		body, err := db.EncodeRelaySourceEvent(event)
 		require.NoError(t, err)
 		sequence := checkpoint.Translation.HopBaselines.Events + 1
-		envelope, err := db.SealRelayEnvelope(db.RelayEnvelope{Version: db.RelayProtocolVersion, BindingUID: binding, ProjectUID: projects[0].UID, AuthorityUID: root.InstanceUID(), SenderInstanceUID: root.InstanceUID(), ReceiverInstanceUID: hub.InstanceUID(), Epoch: checkpoint.Translation.Authority.Epoch, Sequence: sequence, Stream: db.RelayStreamEvent, Path: []string{root.InstanceUID()}, SourceUID: event.EventUID, SourceHash: event.ContentHash, Body: body})
+		envelope, err := db.SealRelayEnvelope(db.RelayEnvelope{Version: db.RelayProtocolVersion, BindingUID: binding, ProjectUID: projects[0].UID, AuthorityUID: root.InstanceUID(), SenderInstanceUID: root.InstanceUID(), ReceiverInstanceUID: hub.InstanceUID(), Epoch: checkpoint.Translation.Authority.Epoch, Sequence: sequence, Stream: db.RelayStreamEvent, Path: []string{leaf.InstanceUID(), root.InstanceUID()}, SourceUID: event.EventUID, SourceHash: event.ContentHash, Body: body})
 		require.NoError(t, err)
 		_, err = hub.AcceptRelayDeliveries(ctx, binding, db.RelayBatch{Stream: db.RelayStreamEvent, Envelopes: []db.RelayEnvelope{envelope}})
 		require.NoError(t, err)

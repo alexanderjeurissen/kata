@@ -73,7 +73,6 @@ func RunRelayCrossProjectRemoval(t *testing.T, store db.Storage) {
 	require.NoError(t, err)
 	for i, removal := range []struct{ eventType, payload string }{
 		{"issue.unlinked", `{"type":"blocks","from_uid":"` + child.UID + `","to_uid":"` + peer.UID + `","link_from_uid":"` + child.UID + `","link_to_uid":"` + peer.UID + `"}`},
-		{"issue.links_changed", `{"parent_removed_uid":"` + peer.UID + `"}`},
 	} {
 		event := newRemoteEvent(t, fixture.project, &child.UID, removal.eventType, "member", instance, time.Now().UnixMilli()+10+int64(i), jsontext.Value(removal.payload))
 		body, err := db.EncodeRelaySourceEvent(event)

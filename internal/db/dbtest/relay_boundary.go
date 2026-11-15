@@ -213,6 +213,25 @@ func RunRelayCrossProjectBoundary(t *testing.T, store db.Storage) {
 	require.Equal(t, oldParent.UID, unlinkPayload.ToUID)
 	require.Equal(t, "issue.linked", replacement.LinkedEvent.Type)
 	require.Equal(t, newParent.ID, replacement.Link.ToIssueID)
+	sharedParent, _, err := store.CreateIssue(ctx, db.CreateIssueParams{ProjectID: first.ID, Author: "member", Title: "Cross-project parent"})
+	require.NoError(t, err)
+	crossReplacement, err := replacementStore.ReplaceParentAndEvents(ctx, db.ReplaceParentAndEventsParams{
+		ExpectedParentLinkID: replacement.Link.ID, ExpectedParentIssueID: newParent.ID,
+		Link:        db.CreateLinkParams{FromIssueID: local.ID, ToIssueID: sharedParent.ID, Type: "parent", Author: "member"},
+		UnlinkEvent: db.LinkEventParams{EventType: "issue.unlinked", EventIssueID: local.ID, FromUID: local.UID, ToUID: newParent.UID},
+		LinkEvent:   db.LinkEventParams{EventType: "issue.linked", EventIssueID: local.ID, FromUID: local.UID, ToUID: sharedParent.UID},
+	})
+	require.NoError(t, err)
+	crossParent, err := store.ParentOf(ctx, local.ID)
+	require.NoError(t, err)
+	require.Equal(t, sharedParent.ID, crossParent.ToIssueID)
+	replacement, err = replacementStore.ReplaceParentAndEvents(ctx, db.ReplaceParentAndEventsParams{
+		ExpectedParentLinkID: crossReplacement.Link.ID, ExpectedParentIssueID: sharedParent.ID,
+		Link:        db.CreateLinkParams{FromIssueID: local.ID, ToIssueID: newParent.ID, Type: "parent", Author: "member"},
+		UnlinkEvent: db.LinkEventParams{EventType: "issue.unlinked", EventIssueID: local.ID, FromUID: local.UID, ToUID: sharedParent.UID},
+		LinkEvent:   db.LinkEventParams{EventType: "issue.linked", EventIssueID: local.ID, FromUID: local.UID, ToUID: newParent.UID},
+	})
+	require.NoError(t, err)
 	currentParentLink := replacement.Link
 	eventsBeforeReplace, err := store.EventsAfter(ctx, db.EventsAfterParams{ProjectID: shared.ID, Limit: 1000})
 	require.NoError(t, err)
