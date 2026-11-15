@@ -10,11 +10,6 @@ import (
 // FoldEvents applies events in deterministic HLC order and returns the resulting
 // replay projection.
 func FoldEvents(events []FoldEvent) FoldProjection {
-	return FoldRelayLinkEvents(events, nil)
-}
-
-// FoldRelayLinkEvents preserves root parent links while folding relay history.
-func FoldRelayLinkEvents(events []FoldEvent, removalCheck FoldParentRemovalCheck) FoldProjection {
 	p := FoldProjection{
 		CronRuns:        map[string]FoldCronRun{},
 		CronJobs:        map[string]FoldCronJob{},
@@ -26,7 +21,6 @@ func FoldRelayLinkEvents(events []FoldEvent, removalCheck FoldParentRemovalCheck
 		IssueMetadata:   map[string]jsontext.Value{},
 		ProjectMetadata: map[string]jsontext.Value{},
 	}
-	p.parentRemovalCheck = removalCheck
 	ordered := append([]FoldEvent(nil), events...)
 	sort.SliceStable(ordered, func(i, j int) bool {
 		return compareClock(clockOf(ordered[i]), clockOf(ordered[j])) < 0
@@ -616,12 +610,8 @@ func (p *FoldProjection) applyLinksChanged(e FoldEvent, payload map[string]jsont
 		return
 	}
 	defer p.touchIssue(base, issueUpdatedAt(e, payload))
-	accepted := p.applyUIDList(base, payload["parent_set_uid"], "parent", true, false, clockOf(e), e.Actor)
-	removed, _ := stringValue(payload["parent_removed_uid"])
-	parent := p.Links[FoldLinkKey{FromUID: base, ToUID: removed, Type: "parent"}]
-	if accepted || !parent.Present || p.parentRemovalCheck == nil || p.parentRemovalCheck(base, removed, parent.Clock, clockOf(e)) {
-		p.applyUIDList(base, payload["parent_removed_uid"], "parent", false, false, clockOf(e), e.Actor)
-	}
+	p.applyUIDList(base, payload["parent_set_uid"], "parent", true, false, clockOf(e), e.Actor)
+	p.applyUIDList(base, payload["parent_removed_uid"], "parent", false, false, clockOf(e), e.Actor)
 	for _, uid := range stringSlice(payload["blocks_added_uids"]) {
 		p.setLink(base, uid, "blocks", true, clockOf(e), e.Actor, "")
 	}
@@ -728,20 +718,13 @@ func (p *FoldProjection) setLink(from, to, typ string, present bool, clock FoldC
 		from, to = to, from
 	}
 	if typ == "parent" && present {
-		if !p.clearOlderParents(from, to, clock) {
-			return false
-		}
+		p.clearOlderParents(from, to, clock)
 	}
 	p.Links[FoldLinkKey{FromUID: from, ToUID: to, Type: typ}] = FoldElementState{Present: present, Clock: clock, Author: author, CreatedAt: createdAt}
 	return true
 }
 
-func (p *FoldProjection) clearOlderParents(childUID, keepParentUID string, clock FoldClock) bool {
-	for key, state := range p.Links {
-		if key.Type == "parent" && key.FromUID == childUID && key.ToUID != keepParentUID && state.Present && compareClock(state.Clock, clock) <= 0 && p.parentRemovalCheck != nil && !p.parentRemovalCheck(childUID, key.ToUID, state.Clock, clock) {
-			return false
-		}
-	}
+func (p *FoldProjection) clearOlderParents(childUID, keepParentUID string, clock FoldClock) {
 	for key, state := range p.Links {
 		if key.Type != "parent" || key.FromUID != childUID || key.ToUID == keepParentUID || !state.Present {
 			continue
@@ -751,7 +734,6 @@ func (p *FoldProjection) clearOlderParents(childUID, keepParentUID string, clock
 		}
 		p.Links[key] = FoldElementState{Present: false, Clock: clock, Author: state.Author}
 	}
-	return true
 }
 
 func (p *FoldProjection) ensureIssue(uid string) FoldIssue {

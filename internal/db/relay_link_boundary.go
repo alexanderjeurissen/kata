@@ -9,10 +9,20 @@ import (
 
 // RelayLinkPolicy decides which cross-project link mutations may be folded.
 type RelayLinkPolicy struct {
-	RootOrigin      bool
-	AcceptedRemoval bool
-	SameRoot        func(string) bool
-	CrossProject    func(string) bool
+	RootOrigin   bool
+	SameRoot     func(string) bool
+	CrossProject func(string) bool
+}
+
+// RelayLinkAdditionPayload excludes removals from link admission checks.
+func RelayLinkAdditionPayload(event RemoteEvent) map[string]jsontext.Value {
+	payload := PayloadMap(event.Payload)
+	if event.Type == "issue.links_changed" {
+		for _, key := range []string{"parent_removed_uid", "blocks_removed_uids", "blocked_by_removed_uids", "related_removed_uids"} {
+			delete(payload, key)
+		}
+	}
+	return payload
 }
 
 // StripCrossProjectLinkAdditions excludes links outside the relay's authority.
@@ -20,13 +30,10 @@ func StripCrossProjectLinkAdditions(event FoldEvent, policy RelayLinkPolicy) (Fo
 	blocked := func(peer string) bool {
 		return policy.CrossProject(peer) && (!policy.RootOrigin || !policy.SameRoot(peer))
 	}
-	blockedRemoval := func(peer string) bool {
-		return !policy.RootOrigin && !policy.AcceptedRemoval && policy.CrossProject(peer)
-	}
 	switch event.Type {
 	case "issue.linked", "issue.unlinked":
 		if event.Type == "issue.unlinked" {
-			blocked = blockedRemoval
+			return event, true, nil
 		}
 		payload := PayloadMap(event.Payload)
 		for _, key := range []string{"from_uid", "to_uid", "from_issue_uid", "to_issue_uid"} {
@@ -41,7 +48,7 @@ func StripCrossProjectLinkAdditions(event FoldEvent, policy RelayLinkPolicy) (Fo
 	case "issue.created", "issue.snapshot":
 		return stripCreationLinks(event, blocked)
 	case "issue.links_changed":
-		return stripLinksChangedAdditions(event, blocked, blockedRemoval)
+		return stripLinksChangedAdditions(event, blocked)
 	}
 	return event, true, nil
 }
@@ -75,15 +82,11 @@ func stripCreationLinks(event FoldEvent, crossProject func(string) bool) (FoldEv
 	return rewritePayload(event, payload, "links", kept)
 }
 
-func stripLinksChangedAdditions(event FoldEvent, crossProject, blockedRemoval func(string) bool) (FoldEvent, bool, error) {
+func stripLinksChangedAdditions(event FoldEvent, crossProject func(string) bool) (FoldEvent, bool, error) {
 	payload := PayloadMap(event.Payload)
 	changed := false
 	if parent, ok := StringValue(payload["parent_set_uid"]); ok && crossProject(parent) {
 		delete(payload, "parent_set_uid")
-		changed = true
-	}
-	if parent, ok := StringValue(payload["parent_removed_uid"]); ok && blockedRemoval(parent) {
-		delete(payload, "parent_removed_uid")
 		changed = true
 	}
 	for _, entry := range []struct {
@@ -91,7 +94,6 @@ func stripLinksChangedAdditions(event FoldEvent, crossProject, blockedRemoval fu
 		blocked func(string) bool
 	}{
 		{"blocks_added_uids", crossProject}, {"blocked_by_added_uids", crossProject}, {"related_added_uids", crossProject},
-		{"blocks_removed_uids", blockedRemoval}, {"blocked_by_removed_uids", blockedRemoval}, {"related_removed_uids", blockedRemoval},
 	} {
 		key := entry.key
 		added := StringSlice(payload[key])
@@ -196,7 +198,6 @@ type RelayFoldAuthority struct {
 	Projects map[string]string
 	Roots    map[string]string
 	Groups   map[string]map[string]bool
-	Relayed  map[string]bool
 }
 
 // Policy filters one relay event using the endpoint's current membership.
@@ -209,11 +210,4 @@ func (a RelayFoldAuthority) Policy(event FoldEvent) RelayLinkPolicy {
 			return a.Roots[peer] != "" && a.Roots[peer] == a.Roots[event.ProjectUID] && a.Groups[event.ProjectUID][peer]
 		},
 	}
-}
-
-// AllowParentRemoval preserves a root crossing against a replica's edit.
-func (a RelayFoldAuthority) AllowParentRemoval(child, parent string, previous, next FoldClock) bool {
-	project, peer := a.Projects[child], a.Projects[parent]
-	root := a.Roots[project]
-	return (!a.Relayed[project] && !a.Relayed[peer]) || project == "" || peer == "" || project == peer || root == "" || a.Roots[peer] != root || !a.Groups[project][peer] || previous.OriginInstanceUID != root || next.OriginInstanceUID == root
 }
