@@ -40,6 +40,7 @@ func TestRelayEventPeerProjects(t *testing.T) {
 		{"links changed", "issue.links_changed", `{"blocks_added_uids":["` + issueUID + `"]}`, nil, true},
 		{"created", "issue.created", `{"links":[{"to_issue_uid":"` + issueUID + `"}]}`, nil, true},
 		{"moved snapshot", "issue.moved", `{"from_project_uid":"source","to_project_uid":"own","snapshot":{"links":[{"to_issue_uid":"` + issueUID + `"}]}}`, nil, true},
+		{"moved snapshot notification", "issue.moved", `{"from_project_uid":"source","to_project_uid":"own","snapshot":{"metadata":{"` + notification.MetadataKey("recipient") + `":{"re":"` + commentUID + `"}}}}`, nil, true},
 		{"comment reply", "issue.commented", `{"reply_to_uid":"` + commentUID + `","reply_kind":"reply"}`, nil, true},
 		{"missing comment reply", "issue.commented", `{"reply_to_uid":"00000000000000000000000003","reply_kind":"reply"}`, nil, false},
 		{"snapshot null links before reply", "issue.snapshot", `{"links":null,"comments":[{"reply_to_uid":"` + commentUID + `","reply_kind":"reply"}]}`, nil, true},

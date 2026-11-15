@@ -84,7 +84,8 @@ func RelayEventPeerProjects(event RemoteEvent, lookup *EventIssueLookup, visit f
 	if err != nil {
 		return err
 	}
-	_, err = notification.WalkEventPayload(jsontext.Value(event.Payload), event.Type, func(slot jsontext.Value) (bool, error) {
+	snapshot := FederationMoveSnapshotEvent(event)
+	_, err = notification.WalkEventPayload(snapshot.Payload, snapshot.Type, func(slot jsontext.Value) (bool, error) {
 		for _, uid := range notification.References(slot) {
 			issue, err := lookup.CommentIssueByUID(uid)
 			_, err = add(issue, err)
