@@ -17,33 +17,6 @@ type RootResetProvenance struct {
 	Entities []EntityProvenance   `json:"entities"`
 }
 
-// VisitRelayResetSources decodes both source sections without changing the snapshot.
-func VisitRelayResetSources(snapshot RootResetSnapshot, visit func(RemoteEvent) error) error {
-	return visitRelayResetSources(snapshot, func(_ int, event RemoteEvent) error { return visit(event) })
-}
-
-func visitRelayResetSources(snapshot RootResetSnapshot, visit func(int, RemoteEvent) error) error {
-	for section, raw := range [][]byte{snapshot.Events, snapshot.Entities} {
-		var bodies [][]byte
-		if err := json.Unmarshal(raw, &bodies, json.RejectUnknownMembers(true)); err != nil {
-			return err
-		}
-		if bodies == nil {
-			return errors.New("reset payload omits an authoritative collection")
-		}
-		for _, body := range bodies {
-			event, err := DecodeRelaySourceEvent(body)
-			if err != nil {
-				return err
-			}
-			if err := visit(section, event); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
 // DecodeRootResetPayload validates committed contents before native replacement.
 // Event bodies retain the original payload bytes, including across compaction.
 func DecodeRootResetPayload(pin RootKeyPin, snapshot RootResetSnapshot) ([]RemoteEvent, RootResetProvenance, error) {
