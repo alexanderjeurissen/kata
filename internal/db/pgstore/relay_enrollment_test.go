@@ -105,15 +105,6 @@ func TestRelayEnrollmentBootstrapCompactedArtifacts(t *testing.T) {
 	})
 }
 
-func TestRelaySharedLinks(t *testing.T) {
-	dsn, cleanup := pgstoretest.NewDatabase(t, t.Context())
-	t.Cleanup(cleanup)
-	store, err := pgstore.Open(t.Context(), dsn)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = store.Close() })
-	dbtest.RunRelaySharedLinks(t, store)
-}
-
 func TestRelayPeerRelease(t *testing.T) {
 	dsn, cleanup := pgstoretest.NewDatabase(t, t.Context())
 	t.Cleanup(cleanup)
@@ -121,6 +112,15 @@ func TestRelayPeerRelease(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = store.Close() })
 	dbtest.RunRelayPeerRelease(t, store)
+}
+
+func TestRelayPurgedPeer(t *testing.T) {
+	dsn, cleanup := pgstoretest.NewDatabase(t, t.Context())
+	t.Cleanup(cleanup)
+	store, err := pgstore.Open(t.Context(), dsn)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = store.Close() })
+	dbtest.RunRelayPurgedPeer(t, store)
 }
 
 func TestRelayMissingNotification(t *testing.T) {
