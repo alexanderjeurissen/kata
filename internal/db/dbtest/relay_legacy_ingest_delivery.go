@@ -68,14 +68,21 @@ func RunRelayCrossProjectRemoval(t *testing.T, store db.Storage) {
 	require.NoError(t, err)
 	_, _, err = store.CreateLinkAndEvent(ctx, db.CreateLinkParams{FromIssueID: child.ID, ToIssueID: peer.ID, Type: "blocks", Author: "member"}, db.LinkEventParams{EventType: "issue.linked", EventIssueID: child.ID, Actor: "member", FromUID: child.UID, ToUID: peer.UID, FromShortID: child.ShortID, ToShortID: peer.ShortID})
 	require.NoError(t, err)
-	event := newRemoteEvent(t, fixture.project, &child.UID, "issue.unlinked", "member", instance, time.Now().UnixMilli()+10, jsontext.Value(`{"type":"blocks","from_uid":"`+child.UID+`","to_uid":"`+peer.UID+`","link_from_uid":"`+child.UID+`","link_to_uid":"`+peer.UID+`"}`))
-	body, err := db.EncodeRelaySourceEvent(event)
+	_, _, err = store.CreateLinkAndEvent(ctx, db.CreateLinkParams{FromIssueID: child.ID, ToIssueID: peer.ID, Type: "parent", Author: "member"}, db.LinkEventParams{EventType: "issue.linked", EventIssueID: child.ID, Actor: "member", FromUID: child.UID, ToUID: peer.UID, FromShortID: child.ShortID, ToShortID: peer.ShortID})
 	require.NoError(t, err)
-	envelope, err := db.SealRelayEnvelope(db.RelayEnvelope{Version: db.RelayProtocolVersion, BindingUID: grant.Enrollment.RelayBindingUID, ProjectUID: fixture.project.UID, AuthorityUID: store.InstanceUID(), SenderInstanceUID: instance, ReceiverInstanceUID: store.InstanceUID(), Epoch: grant.Enrollment.RelayResetEpoch, Sequence: 1, Stream: db.RelayStreamEvent, Path: []string{instance}, SourceUID: event.EventUID, SourceHash: event.ContentHash, Body: body})
-	require.NoError(t, err)
-	_, err = store.AcceptRelayDeliveries(db.WithRootAttribution(ctx, fixture.signer, "relay-member"), grant.Enrollment.RelayBindingUID, db.RelayBatch{Stream: db.RelayStreamEvent, Envelopes: []db.RelayEnvelope{envelope}})
-	require.NoError(t, err)
-	require.Equal(t, []string{peer.UID}, linkTargetUIDs(t, store, child.ID))
+	for i, removal := range []struct{ eventType, payload string }{
+		{"issue.unlinked", `{"type":"blocks","from_uid":"` + child.UID + `","to_uid":"` + peer.UID + `","link_from_uid":"` + child.UID + `","link_to_uid":"` + peer.UID + `"}`},
+		{"issue.links_changed", `{"parent_removed_uid":"` + peer.UID + `"}`},
+	} {
+		event := newRemoteEvent(t, fixture.project, &child.UID, removal.eventType, "member", instance, time.Now().UnixMilli()+10+int64(i), jsontext.Value(removal.payload))
+		body, err := db.EncodeRelaySourceEvent(event)
+		require.NoError(t, err)
+		envelope, err := db.SealRelayEnvelope(db.RelayEnvelope{Version: db.RelayProtocolVersion, BindingUID: grant.Enrollment.RelayBindingUID, ProjectUID: fixture.project.UID, AuthorityUID: store.InstanceUID(), SenderInstanceUID: instance, ReceiverInstanceUID: store.InstanceUID(), Epoch: grant.Enrollment.RelayResetEpoch, Sequence: int64(i + 1), Stream: db.RelayStreamEvent, Path: []string{instance}, SourceUID: event.EventUID, SourceHash: event.ContentHash, Body: body})
+		require.NoError(t, err)
+		_, err = store.AcceptRelayDeliveries(db.WithRootAttribution(ctx, fixture.signer, "relay-member"), grant.Enrollment.RelayBindingUID, db.RelayBatch{Stream: db.RelayStreamEvent, Envelopes: []db.RelayEnvelope{envelope}})
+		require.NoError(t, err)
+		require.Equal(t, []string{peer.UID, peer.UID}, linkTargetUIDs(t, store, child.ID))
+	}
 }
 
 // RunRelayOffersLegacyIngestedEvents covers a direct spoke's creation followed

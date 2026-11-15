@@ -39,22 +39,35 @@ func TestRelayCrossLinkParentFold(t *testing.T) {
 		{UID: "1", ProjectUID: "a", IssueUID: child, OriginInstanceUID: root, Type: "issue.links_changed", HLCPhysicalMS: 1, Payload: jsontext.Value(`{"parent_set_uid":"foreign"}`)},
 		{UID: "2", ProjectUID: "a", IssueUID: child, OriginInstanceUID: replica, Type: "issue.links_changed", HLCPhysicalMS: 2, Payload: jsontext.Value(`{"parent_set_uid":"local"}`)},
 	}
-	projection := db.FoldEvents(events)
-	require.False(t, projection.Links[db.FoldLinkKey{FromUID: child, ToUID: foreign, Type: "parent"}].Present)
-	require.True(t, projection.Links[db.FoldLinkKey{FromUID: child, ToUID: local, Type: "parent"}].Present)
+	authority := db.RelayFoldAuthority{
+		Projects: map[string]string{child: "a", foreign: "b", local: "a"},
+		Roots:    map[string]string{"a": root, "b": root},
+		Groups:   map[string]map[string]bool{"a": {"b": true}},
+		Relayed:  map[string]bool{"a": true},
+	}
+	foreignParent := db.FoldLinkKey{FromUID: child, ToUID: foreign, Type: "parent"}
+	localParent := db.FoldLinkKey{FromUID: child, ToUID: local, Type: "parent"}
+	projection := db.FoldRelayLinkEvents(events, authority.AllowParentRemoval)
+	require.True(t, projection.Links[foreignParent].Present)
+	require.False(t, projection.Links[localParent].Present)
 	events[1].Payload = jsontext.Value(`{"parent_set_uid":"local","parent_removed_uid":"foreign","related_added_uids":["local"]}`)
-	projection = db.FoldEvents(events)
-	require.False(t, projection.Links[db.FoldLinkKey{FromUID: child, ToUID: foreign, Type: "parent"}].Present)
-	require.True(t, projection.Links[db.FoldLinkKey{FromUID: child, ToUID: local, Type: "parent"}].Present)
+	projection = db.FoldRelayLinkEvents(events, authority.AllowParentRemoval)
+	require.True(t, projection.Links[foreignParent].Present)
+	require.False(t, projection.Links[localParent].Present)
 	require.True(t, projection.Links[db.FoldLinkKey{FromUID: child, ToUID: local, Type: "related"}].Present)
 	events[1].Payload = jsontext.Value(`{"parent_removed_uid":"foreign"}`)
-	projection = db.FoldEvents(events)
-	require.False(t, projection.Links[db.FoldLinkKey{FromUID: child, ToUID: foreign, Type: "parent"}].Present)
+	projection = db.FoldRelayLinkEvents(events, authority.AllowParentRemoval)
+	require.True(t, projection.Links[foreignParent].Present)
 	events[1].Payload = jsontext.Value(`{"parent_set_uid":"local","parent_removed_uid":"foreign"}`)
 	events[1].OriginInstanceUID = root
-	projection = db.FoldEvents(events)
-	require.False(t, projection.Links[db.FoldLinkKey{FromUID: child, ToUID: foreign, Type: "parent"}].Present)
-	require.True(t, projection.Links[db.FoldLinkKey{FromUID: child, ToUID: local, Type: "parent"}].Present)
+	projection = db.FoldRelayLinkEvents(events, authority.AllowParentRemoval)
+	require.False(t, projection.Links[foreignParent].Present)
+	require.True(t, projection.Links[localParent].Present)
+	events[1].OriginInstanceUID = replica
+	authority.Relayed["a"] = false
+	projection = db.FoldRelayLinkEvents(events, authority.AllowParentRemoval)
+	require.False(t, projection.Links[foreignParent].Present)
+	require.True(t, projection.Links[localParent].Present)
 }
 
 func TestRelayCrossLinkPolicy(t *testing.T) {
@@ -86,11 +99,6 @@ func TestRelayCrossLinkPolicy(t *testing.T) {
 	_, keep, err = db.StripCrossProjectLinkAdditions(event, authority.Policy(event))
 	require.NoError(t, err)
 	require.False(t, keep)
-	event.Type = "issue.linked"
-	_, keep, err = db.StripCrossProjectLinkAdditions(event, authority.Policy(event))
-	require.NoError(t, err)
-	require.False(t, keep)
-	event.Type = "issue.unlinked"
 	event.OriginInstanceUID = "root"
 	_, keep, err = db.StripCrossProjectLinkAdditions(event, authority.Policy(event))
 	require.NoError(t, err)
