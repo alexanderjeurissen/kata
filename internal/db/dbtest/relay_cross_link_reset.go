@@ -259,7 +259,7 @@ func RunRelayCrossLinkResetHistory(t *testing.T, root db.Storage, backend Backen
 	partialState := relayState(partial)
 	partialMeta := checkpointMeta(partial, partialProject.UID)
 	missingReset, err := partialResets.CreateRelayReset(features, partialDownstream, db.RootAttributionSigner{})
-	require.ErrorIs(t, err, db.ErrNotFound)
+	require.ErrorIs(t, err, db.ErrRelayLinkUnresolved)
 	require.Equal(t, db.RelayResetCheckpoint{}, missingReset)
 	require.Equal(t, partialState, relayState(partial))
 	require.Equal(t, partialMeta, checkpointMeta(partial, partialProject.UID))

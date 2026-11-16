@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"encoding/json/jsontext"
 	"errors"
 	"net/http"
 	"testing"
@@ -28,4 +29,14 @@ func TestRelayTransportErrorClassification(t *testing.T) {
 		require.Equal(t, test.status, apiErr.Status)
 		require.NotContains(t, apiErr.Message, test.err.Error(), "wire errors must not expose storage or source details")
 	}
+}
+
+func TestRelayTransportErrorUnresolvedLink(t *testing.T) {
+	lookup := db.NewEventIssueLookup(func(string) (db.Issue, error) { return db.Issue{}, db.ErrNotFound }, nil, nil)
+	err := db.RelayEventPeerProjects(db.RemoteEvent{Type: "issue.linked", Payload: jsontext.Value(`{"to_uid":"missing"}`)}, lookup, func(string) error { return nil })
+	require.Error(t, err)
+	var apiErr *api.APIError
+	require.ErrorAs(t, relayTransportError(err), &apiErr)
+	require.Equal(t, http.StatusNotFound, apiErr.Status)
+	require.Equal(t, "not_found", apiErr.Code)
 }

@@ -9,6 +9,9 @@ import (
 	"go.kenn.io/kata/internal/notification"
 )
 
+// ErrRelayLinkUnresolved withholds a link until its project can be checked.
+var ErrRelayLinkUnresolved = errors.New("relay link endpoint unresolved")
+
 // RelayEventPeerProjects resolves the projects named by a source event.
 // The lookup must use an unrestricted project context on the held transaction.
 func RelayEventPeerProjects(event RemoteEvent, lookup *EventIssueLookup, visit func(string) error) error {
@@ -36,11 +39,14 @@ func RelayEventPeerProjects(event RemoteEvent, lookup *EventIssueLookup, visit f
 			return false, nil
 		}
 		issue, err := lookup.IssueByUID(uid)
+		if errors.Is(err, ErrNotFound) {
+			return false, ErrRelayLinkUnresolved
+		}
 		if err != nil {
 			return false, err
 		}
 		if issue.ProjectUID == "" {
-			return false, ErrNotFound
+			return false, ErrRelayLinkUnresolved
 		}
 		return false, visit(issue.ProjectUID)
 	}

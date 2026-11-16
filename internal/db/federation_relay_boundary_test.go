@@ -75,7 +75,7 @@ func TestRelayEventPeerProjectsWithholdsUnresolvedLinks(t *testing.T) {
 	} {
 		t.Run(tc.kind, func(t *testing.T) {
 			err := RelayEventPeerProjects(RemoteEvent{ProjectUID: "own", Type: tc.kind, Payload: jsontext.Value(tc.payload)}, lookup, func(string) error { return nil })
-			require.ErrorIs(t, err, ErrNotFound)
+			require.ErrorIs(t, err, ErrRelayLinkUnresolved)
 		})
 	}
 }

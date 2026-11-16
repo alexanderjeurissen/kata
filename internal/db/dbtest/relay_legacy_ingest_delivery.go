@@ -324,7 +324,7 @@ func RunLegacyRelayAdmission(t *testing.T, store db.Storage) {
 					binding := grant.Enrollment.RelayBindingUID
 					before := relayStateForBinding(t, store, binding)
 					out, err := store.PendingRelayDeliveries(features, binding, db.RelayStreamEvent, 100)
-					require.ErrorIs(t, err, db.ErrNotFound)
+					require.ErrorIs(t, err, db.ErrRelayLinkUnresolved)
 					require.Empty(t, out)
 					require.Equal(t, before, relayStateForBinding(t, store, binding))
 					_, _, err = store.CreateIssue(ctx, db.CreateIssueParams{ProjectID: fixture.sibling.ID, UID: peer.UID, Title: "Arrived peer", Author: "member"})
