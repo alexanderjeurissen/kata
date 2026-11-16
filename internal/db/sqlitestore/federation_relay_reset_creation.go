@@ -3,6 +3,7 @@ package sqlitestore
 import (
 	"context"
 	"database/sql"
+	"errors"
 
 	"go.kenn.io/kata/internal/db"
 )
@@ -24,9 +25,25 @@ func (d *Store) CreateRelayReset(ctx context.Context, bindingUID string, signer 
 	return result, nil
 }
 
-func (b relayResetBackend) AuthorizeRelayRelease(ctx context.Context, projectUID string, events []db.RemoteEvent) error {
+func (b relayResetBackend) relayReleaseLookup(ctx context.Context) *db.EventIssueLookup {
 	lookup := eventIssueLookup(db.WithoutIssueRegistries(db.WithAuthorizedProjects(ctx, nil)), b.tx)
-	return db.AuthorizeRelayRelease(ctx, b.tx, lookup, projectUID, events)
+	lookup.SetPurgedLinkProjectLookup(func(uid string) (string, error) {
+		var projectUID sql.NullString
+		err := b.tx.QueryRowContext(ctx, `SELECT project_uid FROM purge_log WHERE issue_uid=? ORDER BY id DESC LIMIT 1`, uid).Scan(&projectUID)
+		if errors.Is(err, sql.ErrNoRows) || (err == nil && (!projectUID.Valid || projectUID.String == "")) {
+			return "", db.ErrNotFound
+		}
+		return projectUID.String, err
+	})
+	return lookup
+}
+
+func (b relayResetBackend) AuthorizeRelayRelease(ctx context.Context, projectUID string, events []db.RemoteEvent) error {
+	return db.AuthorizeRelayRelease(ctx, b.tx, b.relayReleaseLookup(ctx), projectUID, events)
+}
+
+func (b relayResetBackend) AuthorizeRelayReleasePrefix(ctx context.Context, projectUID string, events []db.RemoteEvent) (int, error) {
+	return db.AuthorizeRelayReleasePrefix(ctx, b.tx, b.relayReleaseLookup(ctx), projectUID, events)
 }
 
 func (b relayResetBackend) Project(ctx context.Context, projectID int64) (db.Project, error) {

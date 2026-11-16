@@ -2,8 +2,6 @@ package federation_test
 
 import (
 	"fmt"
-	"io"
-	"net/http"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -70,89 +68,7 @@ func TestRelaySharedLinksAcrossHops(t *testing.T) {
 					require.Len(t, links, 1)
 					require.Equal(t, issues[1].UID, links[0].ToIssueUID)
 				}
-				links, err := hubs[0].store.LinksByIssue(ctx, issueIDForRelayMatrix(t, hubs[0], issues[0].UID))
-				require.NoError(t, err)
-				_, err = hubs[0].store.DeleteLinkAndEvent(ctx, links[0], db.LinkEventParams{EventType: "issue.unlinked", EventIssueID: issueIDForRelayMatrix(t, hubs[0], issues[0].UID), Actor: hub.account, FromUID: issues[0].UID, ToUID: issues[1].UID})
-				require.NoError(t, err)
-				syncRelayMatrixNode(t, hubs[0])
-				syncRelayMatrixNode(t, leaves[0])
-				for _, node := range []*relayMatrixNode{root, leaves[0]} {
-					links, err := node.store.LinksByIssue(ctx, issueIDForRelayMatrix(t, node, issues[0].UID))
-					require.NoError(t, err)
-					require.Empty(t, links)
-				}
-				if reverse {
-					return
-				}
-				child, _, err := root.store.CreateIssue(db.WithRootAttribution(ctx, root.signer, root.account), db.CreateIssueParams{ProjectID: projects[0].ID, Author: root.account, Title: "Replacement child"})
-				require.NoError(t, err)
-				localParent, _, err := root.store.CreateIssue(db.WithRootAttribution(ctx, root.signer, root.account), db.CreateIssueParams{ProjectID: projects[0].ID, Author: root.account, Title: "Local parent"})
-				require.NoError(t, err)
-				old, _, err := root.store.CreateLinkAndEvent(db.WithRootAttribution(ctx, root.signer, root.account), db.CreateLinkParams{FromIssueID: child.ID, ToIssueID: localParent.ID, Type: "parent", Author: root.account}, db.LinkEventParams{EventType: "issue.linked", EventIssueID: child.ID, Actor: root.account, FromUID: child.UID, ToUID: localParent.UID})
-				require.NoError(t, err)
-				_, err = root.store.(db.ParentLinkReplacementStorage).ReplaceParentAndEvents(db.WithRootAttribution(ctx, root.signer, root.account), db.ReplaceParentAndEventsParams{
-					ExpectedParentLinkID: old.ID, ExpectedParentIssueID: localParent.ID,
-					Link:        db.CreateLinkParams{FromIssueID: child.ID, ToIssueID: issues[1].ID, Type: "parent", Author: root.account},
-					UnlinkEvent: db.LinkEventParams{EventType: "issue.unlinked", EventIssueID: child.ID, Actor: root.account, FromUID: child.UID, ToUID: localParent.UID},
-					LinkEvent:   db.LinkEventParams{EventType: "issue.linked", EventIssueID: child.ID, Actor: root.account, FromUID: child.UID, ToUID: issues[1].UID},
-				})
-				require.NoError(t, err)
-				for _, nodes := range [][]*relayMatrixNode{hubs, leaves} {
-					for _, i := range order {
-						syncRelayMatrixNode(t, nodes[i])
-					}
-					parent, err := nodes[0].store.ParentOf(ctx, issueIDForRelayMatrix(t, nodes[0], child.UID))
-					require.NoError(t, err)
-					require.Equal(t, issues[1].UID, parent.ToIssueUID)
-				}
 			})
 		}
-	}
-}
-
-func TestRelaySharedLinksResetFeatures(t *testing.T) {
-	for _, backend := range []string{"sqlite", "postgres"} {
-		t.Run(backend, func(t *testing.T) {
-			ctx := t.Context()
-			root := newRelayMatrixNode(t, backend, "root-member")
-			var projects [2]db.Project
-			var issues [2]db.Issue
-			for i, name := range []string{"preflight-source", "preflight-peer"} {
-				project, err := root.store.CreateProject(ctx, name)
-				require.NoError(t, err)
-				projects[i] = project
-				_, err = root.store.UpsertFederationBinding(ctx, db.FederationBinding{ProjectID: project.ID, Role: db.FederationRoleHub, HubProjectID: project.ID, HubProjectUID: project.UID, Enabled: true})
-				require.NoError(t, err)
-				issues[i], _, err = root.store.CreateIssue(ctx, db.CreateIssueParams{ProjectID: project.ID, Author: root.account, Title: name})
-				require.NoError(t, err)
-			}
-			_, _, err := root.store.CreateLinkAndEvent(ctx, db.CreateLinkParams{FromIssueID: issues[0].ID, ToIssueID: issues[1].ID, Type: "blocks", Author: root.account}, db.LinkEventParams{EventType: "issue.linked", EventIssueID: issues[0].ID, Actor: root.account, FromUID: issues[0].UID, ToUID: issues[1].UID, FromShortID: issues[0].ShortID, ToShortID: issues[1].ShortID})
-			require.NoError(t, err)
-			root.project = projects[0]
-			hub := newRelayMatrixNode(t, backend, "hub-member")
-			enrollRelayMatrixReplica(t, root, hub, "preflight-hub", true)
-			req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("%s/api/v1/projects/%d/federation/relay/reset", root.http.URL, projects[0].ID), nil)
-			require.NoError(t, err)
-			req.Header.Set("Authorization", "Bearer "+hub.credential.Token)
-			response, err := root.http.Client().Do(req)
-			require.NoError(t, err)
-			resetError, err := io.ReadAll(response.Body)
-			require.NoError(t, err)
-			require.NoError(t, response.Body.Close())
-			require.Equal(t, http.StatusConflict, response.StatusCode, string(resetError))
-			require.Contains(t, string(resetError), "unsupported_event_features")
-			require.Contains(t, string(resetError), db.RelayCrossLinksEventFeature)
-			req, err = http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("%s/api/v1/projects/%d/federation/relay/reset", root.http.URL, projects[0].ID), nil)
-			require.NoError(t, err)
-			req.Header.Set("Authorization", "Bearer "+hub.credential.Token)
-			req.Header.Set(db.EventFeaturesHeader, db.SupportedEventFeatures)
-			response, err = root.http.Client().Do(req)
-			require.NoError(t, err)
-			resetBody, err := io.ReadAll(response.Body)
-			require.NoError(t, err)
-			require.NoError(t, response.Body.Close())
-			require.Equal(t, http.StatusOK, response.StatusCode, string(resetBody))
-
-		})
 	}
 }

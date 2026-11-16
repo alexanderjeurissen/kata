@@ -102,7 +102,11 @@ func walkEventProjectReferences(event Event, issueIsPrivate, linkIsPrivate func(
 		if relatedUID == nil {
 			continue
 		}
-		private, err := issueIsPrivate(*relatedUID)
+		check := issueIsPrivate
+		if event.Type == "issue.linked" || event.Type == "issue.unlinked" {
+			check = linkIsPrivate
+		}
+		private, err := check(*relatedUID)
 		if err != nil || private {
 			return private, err
 		}
@@ -173,6 +177,18 @@ func walkEventProjectReferences(event Event, issueIsPrivate, linkIsPrivate func(
 	}
 
 	switch event.Type {
+	case "issue.linked", "issue.unlinked":
+		var payload map[string]jsontext.Value
+		if err := json.Unmarshal([]byte(event.Payload), &payload); err != nil {
+			return true, nil
+		}
+		var uids []string
+		for _, key := range []string{"from_uid", "to_uid", "from_issue_uid", "to_issue_uid", "link_from_uid", "link_to_uid"} {
+			if uid, ok := StringValue(payload[key]); ok && uid != "" {
+				uids = append(uids, uid)
+			}
+		}
+		return checkUIDs(uids)
 	case "issue.moved":
 		var payload map[string]jsontext.Value
 		if err := json.Unmarshal([]byte(event.Payload), &payload); err != nil {

@@ -390,7 +390,7 @@ func RelayPeerEventFeatures(ctx context.Context) string {
 
 // RelayEventFeaturePrefix returns the deliverable prefix supported by the peer.
 func RelayEventFeaturePrefix(ctx context.Context, backend interface {
-	AuthorizeRelayRelease(context.Context, string, []RemoteEvent) error
+	AuthorizeRelayReleasePrefix(context.Context, string, []RemoteEvent) (int, error)
 }, projectUID string, envelopes []RelayEnvelope) ([]RemoteEvent, error) {
 	events := make([]RemoteEvent, 0, len(envelopes))
 	for _, envelope := range envelopes {
@@ -398,13 +398,17 @@ func RelayEventFeaturePrefix(ctx context.Context, backend interface {
 		if err != nil {
 			return nil, err
 		}
-		if err := backend.AuthorizeRelayRelease(ctx, projectUID, []RemoteEvent{event}); err != nil {
-			if len(events) > 0 && errors.Is(err, ErrUnsupportedEventFeatures) {
-				return events, nil
-			}
-			return nil, err
-		}
 		events = append(events, event)
 	}
-	return events, nil
+	count, err := backend.AuthorizeRelayReleasePrefix(ctx, projectUID, events)
+	if errors.Is(err, ErrRelayLinkUnresolved) {
+		return events[:count], nil
+	}
+	if errors.Is(err, ErrUnsupportedEventFeatures) && count > 0 {
+		return events[:count], nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return events[:count], nil
 }

@@ -11,15 +11,18 @@ import (
 // many times resolves it once. All lookups must honor the caller's project
 // boundary, so a hidden issue resolves as not found and is never recorded.
 type EventIssueLookup struct {
-	byUID         func(string) (Issue, error)
-	byRef         func(string, string) (Issue, error)
-	byCommentUID  func(string) (Issue, error)
-	uidIssues     map[string]Issue
-	uidMissed     map[string]struct{}
-	refIssues     map[string]Issue
-	refMissed     map[string]struct{}
-	commentIssues map[string]Issue
-	commentMissed map[string]struct{}
+	byUID            func(string) (Issue, error)
+	byPurgedLinkUID  func(string) (string, error)
+	byRef            func(string, string) (Issue, error)
+	byCommentUID     func(string) (Issue, error)
+	uidIssues        map[string]Issue
+	uidMissed        map[string]struct{}
+	purgedLinkIssues map[string]Issue
+	purgedLinkMissed map[string]struct{}
+	refIssues        map[string]Issue
+	refMissed        map[string]struct{}
+	commentIssues    map[string]Issue
+	commentMissed    map[string]struct{}
 }
 
 // NewEventIssueLookup memoizes issue and comment-owner references for one read.
@@ -38,6 +41,29 @@ func NewEventIssueLookup(
 // IssueByUID resolves an issue UID, memoizing the result.
 func (l *EventIssueLookup) IssueByUID(uid string) (Issue, error) {
 	return memoizedIssue(l.uidIssues, l.uidMissed, uid, func() (Issue, error) { return l.byUID(uid) })
+}
+
+// SetPurgedLinkProjectLookup enables tombstone resolution for relay link references.
+func (l *EventIssueLookup) SetPurgedLinkProjectLookup(lookup func(string) (string, error)) {
+	l.byPurgedLinkUID = lookup
+	l.purgedLinkIssues = make(map[string]Issue)
+	l.purgedLinkMissed = make(map[string]struct{})
+}
+
+// LinkProjectUID resolves a link endpoint, including its retained purge identity.
+func (l *EventIssueLookup) LinkProjectUID(uid string) (string, error) {
+	issue, err := l.IssueByUID(uid)
+	if err == nil {
+		return issue.ProjectUID, nil
+	}
+	if errors.Is(err, ErrNotFound) && l.byPurgedLinkUID != nil {
+		issue, err := memoizedIssue(l.purgedLinkIssues, l.purgedLinkMissed, uid, func() (Issue, error) {
+			projectUID, err := l.byPurgedLinkUID(uid)
+			return Issue{ProjectUID: projectUID}, err
+		})
+		return issue.ProjectUID, err
+	}
+	return "", err
 }
 
 // IssueByRef resolves a reference written in projectUID, memoizing the result.

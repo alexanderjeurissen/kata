@@ -35,17 +35,17 @@ func RelayEventPeerProjects(event RemoteEvent, lookup *EventIssueLookup, visit f
 		if uid == "" {
 			return false, nil
 		}
-		issue, err := lookup.IssueByUID(uid)
+		projectUID, err := lookup.LinkProjectUID(uid)
 		if errors.Is(err, ErrNotFound) {
 			return false, ErrRelayLinkUnresolved
 		}
 		if err != nil {
 			return false, err
 		}
-		if issue.ProjectUID == "" {
+		if projectUID == "" {
 			return false, ErrRelayLinkUnresolved
 		}
-		return false, visit(issue.ProjectUID)
+		return false, visit(projectUID)
 	}
 	issueRef := func(ref string) (bool, error) {
 		if ref == "" {
@@ -84,22 +84,6 @@ func RelayEventPeerProjects(event RemoteEvent, lookup *EventIssueLookup, visit f
 				return err
 			}
 		}
-	case "issue.linked", "issue.unlinked":
-		if event.RelatedIssueUID != nil {
-			if _, err := linkUID(*event.RelatedIssueUID); err != nil {
-				return err
-			}
-		}
-		var payload map[string]jsontext.Value
-		if json.Unmarshal(event.Payload, &payload) == nil {
-			for _, key := range []string{"from_uid", "to_uid", "from_issue_uid", "to_issue_uid", "link_from_uid", "link_to_uid"} {
-				if uid, ok := StringValue(payload[key]); ok && uid != "" {
-					if _, err := linkUID(uid); err != nil {
-						return err
-					}
-				}
-			}
-		}
 	}
 	_, err := walkEventProjectReferences(Event{ProjectUID: event.ProjectUID, RelatedIssueUID: event.RelatedIssueUID, Type: event.Type, Payload: string(event.Payload)}, issueUID, linkUID, issueRef, comment, project)
 	if err != nil {
@@ -124,6 +108,12 @@ func RelayEventPeerProjects(event RemoteEvent, lookup *EventIssueLookup, visit f
 
 // AuthorizeRelayRelease checks every distinct peer before releasing a batch.
 func AuthorizeRelayRelease(ctx context.Context, tx Transaction, lookup *EventIssueLookup, ownProjectUID string, events []RemoteEvent) error {
+	_, err := AuthorizeRelayReleasePrefix(ctx, tx, lookup, ownProjectUID, events)
+	return err
+}
+
+// AuthorizeRelayReleasePrefix returns the first event that cannot be released.
+func AuthorizeRelayReleasePrefix(ctx context.Context, tx Transaction, lookup *EventIssueLookup, ownProjectUID string, events []RemoteEvent) (int, error) {
 	seen := map[string]bool{ownProjectUID: true}
 	visit := func(uid string) error {
 		if uid != ownProjectUID {
@@ -137,10 +127,10 @@ func AuthorizeRelayRelease(ctx context.Context, tx Transaction, lookup *EventIss
 		seen[uid] = true
 		return CheckProjectAccessTransaction(ctx, tx, uid)
 	}
-	for _, event := range events {
+	for i, event := range events {
 		if err := RelayEventPeerProjects(event, lookup, visit); err != nil {
-			return err
+			return i, err
 		}
 	}
-	return nil
+	return len(events), nil
 }

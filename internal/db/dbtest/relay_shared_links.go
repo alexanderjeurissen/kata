@@ -33,14 +33,24 @@ func RunRelayEventReleasePeerAccess(t *testing.T, store db.Storage) {
 		}
 		return nil
 	})
+	_, _, err := store.CreateLinkAndEvent(db.WithRootAttribution(ctx, fixture.Signer, "member"), db.CreateLinkParams{FromIssueID: fixture.Issues[0].ID, ToIssueID: fixture.Issues[1].ID, Type: "parent", Author: "member"}, db.LinkEventParams{EventType: "issue.linked", EventIssueID: fixture.Issues[0].ID, Actor: "member", FromUID: fixture.Issues[0].UID, ToUID: fixture.Issues[1].UID})
+	require.NoError(t, err)
 	binding := fixture.Grant.Enrollment.RelayBindingUID
 	before := relayStateForBinding(t, store, binding)
 	out, err := store.PendingRelayDeliveries(rejectPeer, binding, db.RelayStreamEvent, 100)
 	require.ErrorIs(t, err, denied)
 	require.Empty(t, out)
 	require.Equal(t, before, relayStateForBinding(t, store, binding))
-	offered, err := store.PendingRelayDeliveries(features, binding, db.RelayStreamEvent, 100)
+	checks := 0
+	countPeer := db.WithProjectAccessTransactionCheck(features, func(_ context.Context, _ db.Transaction, uid string) error {
+		if uid == fixture.Projects[1].UID {
+			checks++
+		}
+		return nil
+	})
+	offered, err := store.PendingRelayDeliveries(countPeer, binding, db.RelayStreamEvent, 100)
 	require.NoError(t, err)
+	require.Equal(t, 1, checks)
 	require.NotEmpty(t, offered)
 	out, err = store.PendingRelayDeliveries(rejectPeer, binding, db.RelayStreamEvent, 100)
 	require.ErrorIs(t, err, denied)
@@ -52,7 +62,7 @@ func RunRelayEventReleasePeerAccess(t *testing.T, store db.Storage) {
 	require.NoError(t, store.AckRelayDeliveries(ctx, binding, 1, db.RelayStreamEvent, last.Sequence, last.Digest))
 	_, ordinary, err := store.CreateIssue(ctx, db.CreateIssueParams{ProjectID: fixture.Projects[0].ID, Author: "member", Title: "Before crossing"})
 	require.NoError(t, err)
-	link, crossing, err := store.CreateLinkAndEvent(db.WithRootAttribution(ctx, fixture.Signer, "member"), db.CreateLinkParams{FromIssueID: fixture.Issues[0].ID, ToIssueID: fixture.Issues[1].ID, Type: "related", Author: "member"}, db.LinkEventParams{EventType: "issue.linked", EventIssueID: fixture.Issues[0].ID, Actor: "member", FromUID: fixture.Issues[0].UID, ToUID: fixture.Issues[1].UID})
+	_, crossing, err := store.CreateLinkAndEvent(db.WithRootAttribution(ctx, fixture.Signer, "member"), db.CreateLinkParams{FromIssueID: fixture.Issues[0].ID, ToIssueID: fixture.Issues[1].ID, Type: "related", Author: "member"}, db.LinkEventParams{EventType: "issue.linked", EventIssueID: fixture.Issues[0].ID, Actor: "member", FromUID: fixture.Issues[0].UID, ToUID: fixture.Issues[1].UID})
 	require.NoError(t, err)
 	prefix, err := store.PendingRelayDeliveries(ctx, binding, db.RelayStreamEvent, 100)
 	require.NoError(t, err)
@@ -70,14 +80,6 @@ func RunRelayEventReleasePeerAccess(t *testing.T, store db.Storage) {
 	require.Equal(t, crossing.UID, next[0].SourceUID)
 	require.Equal(t, crossing.ContentHash, next[0].SourceHash)
 	require.NoError(t, store.AckRelayDeliveries(ctx, binding, 1, db.RelayStreamEvent, next[0].Sequence, next[0].Digest))
-	unlinked, err := store.DeleteLinkAndEvent(db.WithRootAttribution(ctx, fixture.Signer, "member"), link, db.LinkEventParams{EventType: "issue.unlinked", EventIssueID: fixture.Issues[0].ID, Actor: "member", FromUID: fixture.Issues[0].UID, ToUID: fixture.Issues[1].UID})
-	require.NoError(t, err)
-	_, err = store.PendingRelayDeliveries(ctx, binding, db.RelayStreamEvent, 100)
-	require.ErrorIs(t, err, db.ErrUnsupportedEventFeatures)
-	next, err = store.PendingRelayDeliveries(features, binding, db.RelayStreamEvent, 100)
-	require.NoError(t, err)
-	require.Len(t, next, 1)
-	require.Equal(t, unlinked.UID, next[0].SourceUID)
 	require.NoError(t, store.RevokeFederationEnrollment(ctx, fixture.Grant.Enrollment.ID))
 	source, err := store.CreateProject(ctx, "move-source")
 	require.NoError(t, err)
@@ -164,4 +166,28 @@ func NewRelaySharedAccessFixture(t *testing.T, store db.Storage) RelaySharedAcce
 	require.NoError(t, err)
 
 	return RelaySharedAccessFixture{Projects: projects, Issues: issues, Grant: grant, Team: team, Signer: db.RootAttributionSigner{AuthorityUID: store.InstanceUID(), PrivateKey: private}}
+}
+
+// RunRelayReleasePurgedLink keeps the original link history deliverable after its peer is purged.
+func RunRelayReleasePurgedLink(t *testing.T, store db.Storage) {
+	ctx := t.Context()
+	fixture := NewRelaySharedAccessFixture(t, store)
+	_, err := store.PurgeIssue(ctx, fixture.Issues[1].ID, "admin", nil)
+	require.NoError(t, err)
+	_, later, err := store.CreateIssue(ctx, db.CreateIssueParams{ProjectID: fixture.Projects[0].ID, Author: "member", Title: "After purge"})
+	require.NoError(t, err)
+	features := db.WithRelayPeerEventFeatures(ctx, db.SupportedEventFeatures)
+	denied := errors.New("purged peer denied")
+	reject := db.WithProjectAccessTransactionCheck(features, func(_ context.Context, _ db.Transaction, uid string) error {
+		if uid == fixture.Projects[1].UID {
+			return denied
+		}
+		return nil
+	})
+	_, err = store.PendingRelayDeliveries(reject, fixture.Grant.Enrollment.RelayBindingUID, db.RelayStreamEvent, 100)
+	require.ErrorIs(t, err, denied)
+	items, err := store.PendingRelayDeliveries(features, fixture.Grant.Enrollment.RelayBindingUID, db.RelayStreamEvent, 100)
+	require.NoError(t, err)
+	require.NotEmpty(t, items)
+	require.Equal(t, later.UID, items[len(items)-1].SourceUID)
 }

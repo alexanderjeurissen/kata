@@ -65,13 +65,11 @@ func TestRelayEventPeerProjects(t *testing.T) {
 			require.Equal(t, tc.want, projects)
 		})
 	}
-}
-
-func TestRelayEventPeerProjectsWithholdsUnresolvedLinks(t *testing.T) {
-	lookup := NewEventIssueLookup(func(string) (Issue, error) { return Issue{}, ErrNotFound }, func(string, string) (Issue, error) { return Issue{}, ErrNotFound }, func(string) (Issue, error) { return Issue{}, ErrNotFound })
 	for _, tc := range []struct{ kind, payload string }{
 		{"issue.linked", `{"from_uid":"missing"}`},
 		{"issue.unlinked", `{"to_uid":"missing"}`},
+		{"issue.unlinked", `{"link_from_uid":"missing"}`},
+		{"issue.unlinked", `{"link_to_uid":"missing"}`},
 		{"issue.links_changed", `{"related_added_uids":["missing"]}`},
 		{"issue.snapshot", `{"links":[{"to_issue_uid":"missing"}]}`},
 	} {
@@ -110,4 +108,12 @@ func TestAuthorizeRelayReleaseCrossingEvents(t *testing.T) {
 			require.NoError(t, AuthorizeRelayRelease(WithRelayPeerEventFeatures(t.Context(), RelayCrossLinksEventFeature), nil, lookup, "own", []RemoteEvent{event}))
 		})
 	}
+}
+
+func TestAuthorizeRelayReleasePrefixHoldsMissingLink(t *testing.T) {
+	lookup := NewEventIssueLookup(func(string) (Issue, error) { return Issue{}, ErrNotFound }, nil, nil)
+	events := []RemoteEvent{{ProjectUID: "own", Type: "issue.updated", Payload: jsontext.Value(`{}`)}, {ProjectUID: "own", Type: "issue.unlinked", Payload: jsontext.Value(`{"to_uid":"missing"}`)}, {ProjectUID: "own", Type: "issue.updated", Payload: jsontext.Value(`{}`)}}
+	count, err := AuthorizeRelayReleasePrefix(t.Context(), nil, lookup, "own", events)
+	require.Equal(t, 1, count)
+	require.ErrorIs(t, err, ErrRelayLinkUnresolved)
 }
