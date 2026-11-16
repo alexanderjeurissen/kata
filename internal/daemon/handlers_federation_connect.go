@@ -106,9 +106,6 @@ func registerFederationBridgeConnect(humaAPI huma.API, cfg ServerConfig) {
 		metadataResponse, callErr := bridge.GetProjectFederationWithResponse(ctx, &generated.GetProjectFederationRequestOptions{
 			PathParams: &generated.GetProjectFederationPath{ProjectID: resolved.Project.ID},
 			Query:      &generated.GetProjectFederationQuery{RelayProtocolVersion: &relayProtocolVersion},
-		}, func(_ context.Context, req *http.Request) error {
-			req.Header.Set(db.EventFeaturesHeader, db.SupportedEventFeatures)
-			return nil
 		})
 		var metadataRaw []byte
 		if metadataResponse != nil {

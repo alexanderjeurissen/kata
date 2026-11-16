@@ -7,34 +7,32 @@ import (
 	"fmt"
 )
 
-// RelayLinkPolicy decides which cross-project link mutations may be folded.
-type RelayLinkPolicy struct {
-	RootOrigin   bool
-	SameRoot     func(string) bool
-	CrossProject func(string) bool
-}
-
-// StripCrossProjectLinkAdditions excludes links outside the relay's authority.
-func StripCrossProjectLinkAdditions(event FoldEvent, policy RelayLinkPolicy) (FoldEvent, bool, error) {
-	blocked := func(peer string) bool {
-		return policy.CrossProject(peer) && (!policy.RootOrigin || !policy.SameRoot(peer))
-	}
+// StripCrossProjectLinkAdditions removes from one relay-sourced fold event
+// every link addition whose peer crossProject reports as living in another
+// project, and keeps everything else the event carries. A composite creation
+// or snapshot keeps its same-project links; a links_changed keeps its removals
+// and its same-project additions; a single-edge issue.linked is dropped only
+// when its own peer crosses. Removals are never dropped: taking an edge away
+// cannot create a boundary crossing, and dropping a removal would leave the
+// hub with an edge its replicas no longer have. The returned bool is false
+// when the whole event is to be left out of the fold.
+func StripCrossProjectLinkAdditions(event FoldEvent, crossProject func(peerUID string) bool) (FoldEvent, bool, error) {
 	switch event.Type {
 	case "issue.linked":
 		payload := PayloadMap(event.Payload)
 		for _, key := range []string{"from_uid", "to_uid", "from_issue_uid", "to_issue_uid"} {
-			if peer, ok := StringValue(payload[key]); ok && blocked(peer) {
+			if peer, ok := StringValue(payload[key]); ok && crossProject(peer) {
 				return event, false, nil
 			}
 		}
-		if event.RelatedIssueUID != "" && blocked(event.RelatedIssueUID) {
+		if event.RelatedIssueUID != "" && crossProject(event.RelatedIssueUID) {
 			return event, false, nil
 		}
 		return event, true, nil
 	case "issue.created", "issue.snapshot":
-		return stripCreationLinks(event, blocked)
+		return stripCreationLinks(event, crossProject)
 	case "issue.links_changed":
-		return stripLinksChangedAdditions(event, blocked)
+		return stripLinksChangedAdditions(event, crossProject)
 	}
 	return event, true, nil
 }
@@ -116,40 +114,9 @@ func rewritePayload(event FoldEvent, payload map[string]jsontext.Value, key stri
 	return event, true, nil
 }
 
-// ValidateLegacyRelayAdmission rejects fresh crossing link changes.
+// ValidateLegacyRelayAdmission rejects fresh crossing additions while preserving
+// missing peers and cleanup. Callers resolve membership within the ingest transaction.
 func ValidateLegacyRelayAdmission(ctx context.Context, event RemoteEvent, uidCrosses, shortIDCrosses, refCrosses func(context.Context, string) (bool, error)) error {
-	if event.Type == "issue.unlinked" || event.Type == "issue.links_changed" {
-		payload := PayloadMap(event.Payload)
-		var peers []string
-		if event.Type == "issue.unlinked" {
-			for _, key := range []string{"from_uid", "to_uid", "from_issue_uid", "to_issue_uid"} {
-				if peer, ok := StringValue(payload[key]); ok {
-					peers = append(peers, peer)
-				}
-			}
-			if event.RelatedIssueUID != nil {
-				peers = append(peers, *event.RelatedIssueUID)
-			}
-		} else {
-			for _, key := range []string{"blocks_removed_uids", "blocked_by_removed_uids", "related_removed_uids"} {
-				peers = append(peers, StringSlice(payload[key])...)
-			}
-		}
-		for _, peer := range peers {
-			crosses, err := uidCrosses(ctx, peer)
-			if err != nil {
-				return err
-			}
-			if crosses {
-				return fmt.Errorf("%w: event %s: %w", ErrFederationIngestValidation, event.EventUID, ErrFederationCrossProjectBoundary)
-			}
-		}
-	}
-	return ValidateLegacyRelayAdditions(ctx, event, uidCrosses, shortIDCrosses, refCrosses)
-}
-
-// ValidateLegacyRelayAdditions detects crossing additions in accepted history.
-func ValidateLegacyRelayAdditions(ctx context.Context, event RemoteEvent, uidCrosses, shortIDCrosses, refCrosses func(context.Context, string) (bool, error)) error {
 	var lookupErr error
 	crossing := false
 	checkUID := func(peer string) bool {
@@ -163,7 +130,7 @@ func ValidateLegacyRelayAdditions(ctx context.Context, event RemoteEvent, uidCro
 	switch event.Type {
 	case "issue.linked", "issue.links_changed", "issue.created", "issue.snapshot":
 		fold := FoldEvent{UID: event.EventUID, Type: event.Type, Payload: event.Payload}
-		if _, _, err := StripCrossProjectLinkAdditions(fold, RelayLinkPolicy{RootOrigin: true, CrossProject: checkUID, SameRoot: func(string) bool { return false }}); err != nil {
+		if _, _, err := StripCrossProjectLinkAdditions(fold, checkUID); err != nil {
 			return err
 		}
 	case "issue.closed":
@@ -201,31 +168,4 @@ func ValidateLegacyRelayAdditions(ctx context.Context, event RemoteEvent, uidCro
 		return fmt.Errorf("%w: event %s: %w", ErrFederationIngestValidation, event.EventUID, ErrFederationCrossProjectBoundary)
 	}
 	return nil
-}
-
-// RelayFoldAuthority holds the group and root of known link endpoints.
-type RelayFoldAuthority struct {
-	Projects map[string]string
-	Roots    map[string]string
-	Groups   map[string]map[string]bool
-	Relayed  map[string]bool
-}
-
-// AllowParentRemoval preserves a root crossing against a replica's edit.
-func (a RelayFoldAuthority) AllowParentRemoval(child, parent string, previous, next FoldClock) bool {
-	project, peer := a.Projects[child], a.Projects[parent]
-	root := a.Roots[project]
-	return (!a.Relayed[project] && !a.Relayed[peer]) || project == "" || peer == "" || project == peer || root == "" || a.Roots[peer] != root || !a.Groups[project][peer] || previous.OriginInstanceUID != root || next.OriginInstanceUID == root
-}
-
-// Policy filters one relay event using the endpoint's current membership.
-func (a RelayFoldAuthority) Policy(event FoldEvent) RelayLinkPolicy {
-	return RelayLinkPolicy{
-		RootOrigin:   a.Roots[event.ProjectUID] != "" && a.Roots[event.ProjectUID] == event.OriginInstanceUID,
-		CrossProject: func(uid string) bool { return a.Projects[uid] != "" && a.Projects[uid] != event.ProjectUID },
-		SameRoot: func(uid string) bool {
-			peer := a.Projects[uid]
-			return a.Roots[peer] != "" && a.Roots[peer] == a.Roots[event.ProjectUID] && a.Groups[event.ProjectUID][peer]
-		},
-	}
 }

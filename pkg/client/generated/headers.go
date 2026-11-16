@@ -35,10 +35,6 @@ type RestoreCronJobHeaders struct {
 	Authorization *string `json:"Authorization,omitempty"`
 }
 
-type GetProjectFederationHeaders struct {
-	XKataEventFeatures *string `json:"X-Kata-Event-Features,omitempty"`
-}
-
 type PollFederationProjectEventsHeaders struct {
 	XKataEventFeatures *string `json:"X-Kata-Event-Features,omitempty"`
 	Authorization      *string `json:"Authorization,omitempty"`

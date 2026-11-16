@@ -247,11 +247,11 @@ func federationGroupFoldProjection(
 		}
 		events = append(events, projectEvents...)
 	}
-	events, check, err := filterRelayCrossProjectLinkEvents(ctx, tx, m.groupProjectIDs, events)
+	events, err := filterRelayCrossProjectLinkEvents(ctx, tx, m.groupProjectIDs, events)
 	if err != nil {
 		return db.FoldProjection{}, err
 	}
-	return db.FoldRelayLinkEvents(events, check), nil
+	return db.FoldEvents(events), nil
 }
 
 func newFederatedLinkGroupMaterialization(

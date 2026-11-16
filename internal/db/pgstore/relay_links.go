@@ -14,21 +14,15 @@ func validateRelayLinkEndpointsInProject(
 	tx *sql.Tx,
 	projectID int64,
 	event db.RemoteEvent,
-	rootForwarded bool,
 ) error {
-	if !db.FederationEventAffectsLinks(event.Type) || (rootForwarded && event.Type == "issue.unlinked") {
+	if !db.FederationEventAffectsLinks(event.Type) || event.Type == "issue.unlinked" {
 		return nil
 	}
 	payload := db.PayloadMap(event.Payload)
 	if event.Type == "issue.links_changed" {
 		event.RelatedIssueUID = nil
-		if rootForwarded {
-			for _, key := range []string{"parent_removed_uid", "blocks_removed_uids", "blocked_by_removed_uids", "related_removed_uids"} {
-				delete(payload, key)
-			}
-		}
-		if parent, ok := db.StringValue(payload["parent_set_uid"]); ok && parent != "" {
-			delete(payload, "parent_removed_uid") // The fold protects the root parent during replacement.
+		for _, key := range []string{"parent_removed_uid", "blocks_removed_uids", "blocked_by_removed_uids", "related_removed_uids"} {
+			delete(payload, key)
 		}
 	}
 	primaryUID := db.EventIssueUID(event.IssueUID)
@@ -164,22 +158,22 @@ func filterRelayCrossProjectLinkEvents(
 	tx *sql.Tx,
 	projectIDs []int64,
 	events []db.FoldEvent,
-) ([]db.FoldEvent, db.FoldParentRemovalCheck, error) {
+) ([]db.FoldEvent, error) {
 	if len(projectIDs) == 0 || len(events) == 0 {
-		return events, nil, nil
+		return events, nil
 	}
 	classifier, err := loadRelayOriginClassifier(ctx, tx, projectIDs)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	issueProjects, err := relayLinkEndpointProjects(ctx, tx, events)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	authority, err := relayFoldAuthorityTx(ctx, tx, issueProjects, classifier.instanceUID)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	filtered := make([]db.FoldEvent, 0, len(events))
 	for _, event := range events {
@@ -187,16 +181,21 @@ func filterRelayCrossProjectLinkEvents(
 			filtered = append(filtered, event)
 			continue
 		}
-		policy := authority.Policy(event)
-		stripped, keep, err := db.StripCrossProjectLinkAdditions(event, policy)
+		crosses := func(uid string) bool {
+			peer := authority.Projects[uid]
+			root := authority.Roots[event.ProjectUID]
+			shared := root != "" && root == event.OriginInstanceUID && authority.Roots[peer] == root && authority.Groups[event.ProjectUID][peer]
+			return peer != "" && peer != event.ProjectUID && !shared
+		}
+		stripped, keep, err := db.StripCrossProjectLinkAdditions(event, crosses)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		if keep {
 			filtered = append(filtered, stripped)
 		}
 	}
-	return filtered, authority.AllowParentRemoval, nil
+	return filtered, nil
 }
 
 // relayLinkEndpointProjects resolves only issue UIDs referenced by this fold.
@@ -244,9 +243,15 @@ func relayLinkEndpointProjects(ctx context.Context, tx *sql.Tx, events []db.Fold
 	return owners, nil
 }
 
+type relayFoldAuthority struct {
+	Projects map[string]string
+	Roots    map[string]string
+	Groups   map[string]map[string]bool
+}
+
 // relayFoldAuthorityTx loads live project membership for relay link folding.
-func relayFoldAuthorityTx(ctx context.Context, tx *sql.Tx, owners map[string]string, instance string) (db.RelayFoldAuthority, error) {
-	a := db.RelayFoldAuthority{Projects: owners, Roots: map[string]string{}, Groups: map[string]map[string]bool{}, Relayed: map[string]bool{}}
+func relayFoldAuthorityTx(ctx context.Context, tx *sql.Tx, owners map[string]string, instance string) (relayFoldAuthority, error) {
+	a := relayFoldAuthority{Projects: owners, Roots: map[string]string{}, Groups: map[string]map[string]bool{}}
 	ids := map[string]int64{}
 	uids := map[int64]string{}
 	for _, uid := range owners {
@@ -267,11 +272,6 @@ func relayFoldAuthorityTx(ctx context.Context, tx *sql.Tx, owners map[string]str
 		ids[uid], uids[id] = id, uid
 	}
 	for uid, id := range ids {
-		relayed, err := relayProjectsActiveTx(ctx, tx, id, id)
-		if err != nil {
-			return a, err
-		}
-		a.Relayed[uid] = relayed
 		binding, err := scanFederationBinding(tx.QueryRowContext(ctx, federationBindingSelect+` WHERE project_id=$1`, id))
 		if errors.Is(err, db.ErrNotFound) {
 			continue

@@ -390,65 +390,21 @@ func RelayPeerEventFeatures(ctx context.Context) string {
 
 // RelayEventFeaturePrefix returns the deliverable prefix supported by the peer.
 func RelayEventFeaturePrefix(ctx context.Context, backend interface {
-	RootPin(context.Context, string, string) (RootKeyPin, error)
-	IssueProjectUID(context.Context, string) (string, error)
+	AuthorizeRelayRelease(context.Context, string, []RemoteEvent) error
 }, projectUID string, envelopes []RelayEnvelope) ([]RemoteEvent, error) {
-	if len(envelopes) == 0 {
-		return nil, nil
-	}
-	pin, err := backend.RootPin(ctx, projectUID, "")
-	if err != nil {
-		return nil, err
-	}
 	events := make([]RemoteEvent, 0, len(envelopes))
-	for i, envelope := range envelopes {
+	for _, envelope := range envelopes {
 		event, err := DecodeRelaySourceEvent(envelope.Body)
 		if err != nil {
 			return nil, err
 		}
-		required, err := RelayContentRequiredFeatures(event, pin.AuthorityUID, func(uid string) (string, error) { return backend.IssueProjectUID(ctx, uid) })
-		if err != nil {
-			return nil, err
-		}
-		if err := RequireEventFeatures(RelayPeerEventFeatures(ctx), required); err != nil {
-			if i == 0 {
-				return nil, err
+		if err := backend.AuthorizeRelayRelease(ctx, projectUID, []RemoteEvent{event}); err != nil {
+			if len(events) > 0 && errors.Is(err, ErrUnsupportedEventFeatures) {
+				return events, nil
 			}
-			return events, nil
+			return nil, err
 		}
 		events = append(events, event)
 	}
 	return events, nil
-}
-
-// RelayContentRequiredFeatures identifies root links a peer must understand.
-// resolve returns an empty project for an endpoint that has not arrived yet.
-func RelayContentRequiredFeatures(event RemoteEvent, root string, resolve func(string) (string, error)) (string, error) {
-	if event.OriginInstanceUID != root || !FederationEventAffectsLinks(event.Type) {
-		return "", nil
-	}
-	fold := FoldEvent{UID: event.EventUID, Type: event.Type, Payload: event.Payload}
-	if event.RelatedIssueUID != nil {
-		fold.RelatedIssueUID = *event.RelatedIssueUID
-	}
-	var lookupErr error
-	crossing := false
-	_, _, err := StripCrossProjectLinkAdditions(fold, RelayLinkPolicy{CrossProject: func(uid string) bool {
-		if uid != "" && (event.IssueUID == nil || uid != *event.IssueUID) && lookupErr == nil && !crossing {
-			var project string
-			project, lookupErr = resolve(uid)
-			crossing = crossing || project != event.ProjectUID
-		}
-		return false
-	}})
-	if err != nil {
-		return "", err
-	}
-	if lookupErr != nil {
-		return "", lookupErr
-	}
-	if crossing {
-		return RelayCrossLinksEventFeature, nil
-	}
-	return "", nil
 }

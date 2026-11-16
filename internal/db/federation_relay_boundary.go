@@ -126,6 +126,11 @@ func RelayEventPeerProjects(event RemoteEvent, lookup *EventIssueLookup, visit f
 func AuthorizeRelayRelease(ctx context.Context, tx Transaction, lookup *EventIssueLookup, ownProjectUID string, events []RemoteEvent) error {
 	seen := map[string]bool{ownProjectUID: true}
 	visit := func(uid string) error {
+		if uid != ownProjectUID {
+			if err := RequireEventFeatures(RelayPeerEventFeatures(ctx), RelayCrossLinksEventFeature); err != nil {
+				return err
+			}
+		}
 		if seen[uid] {
 			return nil
 		}

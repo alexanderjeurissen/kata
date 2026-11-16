@@ -143,8 +143,7 @@ func (d *Store) AcceptRelayDeliveries(ctx context.Context, bindingUID string, ba
 				if err := validateFederationProjectEvent(projectUID, source.OriginInstanceUID, source, known, true); err != nil {
 					return err
 				}
-				// Only the authenticated upstream can forward history through the root.
-				if err := validateRelayLinkEndpointsInProject(ctx, tx, projectID, source, grant.ID <= 0 && slices.Contains(envelope.Path, pin.AuthorityUID)); err != nil {
+				if err := validateRelayLinkEndpointsInProject(ctx, tx, projectID, source); err != nil {
 					return err
 				}
 				producerAuthorityUID := pin.AuthorityUID

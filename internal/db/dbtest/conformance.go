@@ -157,7 +157,6 @@ var storageScenarios = []scenario{
 		RunLegacyRelayParentUIDCollision(t, store)
 		return nil
 	}},
-	{name: "direct parent conflict", run: func(t *testing.T, store db.Storage) error { RunDirectParentConflict(t, store); return nil }},
 	{name: "relay cross project removal", run: func(t *testing.T, store db.Storage) error { RunRelayCrossProjectRemoval(t, store); return nil }},
 	{name: "relay event release peer access", run: func(t *testing.T, store db.Storage) error { RunRelayEventReleasePeerAccess(t, store); return nil }},
 	{name: "relay offers legacy ingested events", methods: []string{"IngestFederationEvents", "PendingRelayDeliveries", "PatchIssueMetadata"}, run: func(t *testing.T, store db.Storage) error {

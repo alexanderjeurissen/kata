@@ -142,9 +142,6 @@ func (s *Store) DeleteLinkAndEvent(
 		if err := checkLinkEndpointsProjectAccessTx(ctx, tx, link.FromIssueID, link.ToIssueID); err != nil {
 			return err
 		}
-		if err := ensureRelayLinkRemovalBoundaryTx(ctx, tx, link, eventIssue); err != nil {
-			return err
-		}
 		result, err := tx.ExecContext(ctx, `DELETE FROM links WHERE id = $1`, link.ID)
 		if err != nil {
 			return mapSQLError(err, nil)

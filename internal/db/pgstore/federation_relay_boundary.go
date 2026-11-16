@@ -40,21 +40,6 @@ func ensureRelayLinkBoundaryTx(ctx context.Context, tx *sql.Tx, fromID, toID int
 	return nil
 }
 
-func ensureRelayLinkRemovalBoundaryTx(ctx context.Context, tx *sql.Tx, link db.Link, eventIssue db.Issue) error {
-	err := ensureRelayLinkBoundaryTx(ctx, tx, link.FromIssueID, link.ToIssueID)
-	if !errors.Is(err, db.ErrFederationCrossProjectBoundary) || (eventIssue.ID != link.FromIssueID && eventIssue.ID != link.ToIssueID) {
-		return err
-	}
-	root, rootErr := relaySharedProjectsTx(ctx, tx, eventIssue.ProjectID, eventIssue.ProjectID, true)
-	if rootErr != nil {
-		return rootErr
-	}
-	if root {
-		return nil
-	}
-	return err
-}
-
 func relayProjectsActiveTx(ctx context.Context, tx *sql.Tx, fromProject, toProject int64) (bool, error) {
 	var relayed bool
 	err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM federation_bindings b WHERE b.project_id IN($1,$2) AND (b.relay_config IS NOT NULL OR EXISTS(SELECT 1 FROM federation_enrollments e WHERE e.project_id=b.project_id AND e.relay_protocol_version=1 AND e.revoked_at IS NULL)))`, fromProject, toProject).Scan(&relayed)
@@ -248,22 +233,16 @@ func relayEventCrossesProjectTx(ctx context.Context, tx *sql.Tx, projectID int64
 		}
 		rootLink = pinErr == nil && pin.AuthorityUID == event.OriginInstanceUID
 		if !rootLink {
-			var receipt bool
-			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM federation_event_provenance WHERE project_uid=$1 AND event_uid=$2)`, event.ProjectUID, event.EventUID).Scan(&receipt); err != nil {
+			crosses := func(ctx context.Context, peer string) (bool, error) {
+				var own bool
+				err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM issues WHERE uid=$1 AND project_id=$2)`, peer, projectID).Scan(&own)
+				return !own, err
+			}
+			err := db.ValidateLegacyRelayAdmission(ctx, event, crosses, func(context.Context, string) (bool, error) { return false, nil }, func(context.Context, string) (bool, error) { return false, nil })
+			if err != nil && !errors.Is(err, db.ErrFederationCrossProjectBoundary) {
 				return false, err
 			}
-			if !receipt {
-				crosses := func(ctx context.Context, peer string) (bool, error) {
-					var own bool
-					err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM issues WHERE uid=$1 AND project_id=$2)`, peer, projectID).Scan(&own)
-					return !own, err
-				}
-				err := db.ValidateLegacyRelayAdditions(ctx, event, crosses, func(context.Context, string) (bool, error) { return false, nil }, func(context.Context, string) (bool, error) { return false, nil })
-				if err != nil && !errors.Is(err, db.ErrFederationCrossProjectBoundary) {
-					return false, err
-				}
-				legacyCleanup = err == nil
-			}
+			legacyCleanup = err == nil
 		}
 	}
 	for _, ref := range refs {

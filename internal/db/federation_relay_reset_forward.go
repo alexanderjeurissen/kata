@@ -168,17 +168,6 @@ func (p RelayResetProtocol) AuthorizeCheckpointDownload(ctx context.Context, bin
 	if err != nil {
 		return RelayResetCheckpoint{}, err
 	}
-	for _, event := range events {
-		required, err := RelayContentRequiredFeatures(event, pin.AuthorityUID, func(uid string) (string, error) {
-			return p.Backend.IssueProjectUID(ctx, uid)
-		})
-		if err != nil {
-			return RelayResetCheckpoint{}, err
-		}
-		if err := RequireEventFeatures(RelayPeerEventFeatures(ctx), required); err != nil {
-			return RelayResetCheckpoint{}, err
-		}
-	}
 	if err := p.Backend.AuthorizeRelayRelease(ctx, checkpoint.Manifest.ProjectUID, events); err != nil {
 		return RelayResetCheckpoint{}, err
 	}

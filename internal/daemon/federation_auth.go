@@ -277,26 +277,17 @@ func evaluateFederationRequestForCapabilities(
 			if err != nil {
 				return errors.Join(errHostFederationAccessUnavailable, err)
 			}
-			if cfg.HostFederationAccess == nil {
-				return nil
+			fenced, err := authorizeFederationPeerHost(checkCtx, cfg, tx, HostFederationAccessRequest{Enrollment: enrollment, EnrollmentProjectUID: project.UID, Project: peer, Capability: capability, Operation: operation})
+			if fenced && err != nil {
+				return &peerFenceRejection{err: err}
 			}
-			if projects, restricted := db.AuthorizedProjects(checkCtx); restricted {
-				checkCtx = db.WithAuthorizedProjects(checkCtx, append(slices.Clone(projects), peerUID))
-			}
-			decision, err := cfg.HostFederationAccess.AuthorizeFederation(checkCtx, HostFederationAccessRequest{Enrollment: enrollment, EnrollmentProjectUID: project.UID, Project: peer, Capability: capability, Operation: operation})
 			if errors.Is(err, ErrHostAccessDenied) {
 				return projectAccessDenied()
 			}
-			if err != nil {
+			if errors.Is(err, ErrHostFederationAdmissionLimited) {
 				return errors.Join(errHostFederationAccessUnavailable, err)
 			}
-			if decision.TransactionFence == nil {
-				return errHostFederationAccessUnavailable
-			}
-			if err := sanitizeFederationTransactionFence(decision.TransactionFence)(checkCtx, tx); err != nil {
-				return &peerFenceRejection{err: err}
-			}
-			return nil
+			return err
 		}
 	}
 	scopedProjectID := int64(0)
@@ -386,27 +377,33 @@ func authorizeFederationMoveSource(ctx context.Context, cfg ServerConfig, transa
 	if decision, _ := ctx.Value(projectAccessContextKey{}).(*ProjectAccessDecision); decision != nil && decision.fixedUIDs != nil && !slices.Contains(decision.fixedUIDs, source.UID) {
 		return ErrHostAccessDenied
 	}
-	if cfg.HostFederationAccess == nil {
-		return nil
-	}
-	if projects, restricted := db.AuthorizedProjects(ctx); restricted {
-		ctx = db.WithAuthorizedProjects(ctx, append(slices.Clone(projects), source.UID))
-	}
-	decision, err := cfg.HostFederationAccess.AuthorizeFederation(ctx, HostFederationAccessRequest{
+	_, err := authorizeFederationPeerHost(ctx, cfg, transaction, HostFederationAccessRequest{
 		Enrollment: enrollment, EnrollmentProjectUID: source.UID, Project: source, Capability: "push",
 		Operation: federationTransportOperation("ingestFederationProjectEvents"),
 	})
+	return err
+}
+
+// authorizeFederationPeerHost applies host policy for an additional referenced project.
+func authorizeFederationPeerHost(ctx context.Context, cfg ServerConfig, transaction db.Transaction, request HostFederationAccessRequest) (bool, error) {
+	if cfg.HostFederationAccess == nil {
+		return false, nil
+	}
+	if projects, restricted := db.AuthorizedProjects(ctx); restricted {
+		ctx = db.WithAuthorizedProjects(ctx, append(slices.Clone(projects), request.Project.UID))
+	}
+	decision, err := cfg.HostFederationAccess.AuthorizeFederation(ctx, request)
 	switch {
 	case errors.Is(err, ErrHostAccessDenied):
-		return ErrHostAccessDenied
+		return false, ErrHostAccessDenied
 	case errors.Is(err, ErrHostFederationAdmissionLimited):
-		return ErrHostFederationAdmissionLimited
+		return false, ErrHostFederationAdmissionLimited
 	case err != nil:
-		return errors.Join(errHostFederationAccessUnavailable, err)
+		return false, errors.Join(errHostFederationAccessUnavailable, err)
 	case decision.TransactionFence == nil:
-		return errHostFederationAccessUnavailable
+		return false, errHostFederationAccessUnavailable
 	}
-	return sanitizeFederationTransactionFence(decision.TransactionFence)(ctx, transaction)
+	return true, sanitizeFederationTransactionFence(decision.TransactionFence)(ctx, transaction)
 }
 
 // authenticateFederationMoveSources validates supplemental bearer possession.

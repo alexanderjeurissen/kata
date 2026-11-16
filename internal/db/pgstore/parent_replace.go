@@ -66,9 +66,6 @@ func (s *Store) ReplaceParentAndEvents(
 		if oldLink.ID != input.ExpectedParentLinkID || oldLink.ToIssueID != input.ExpectedParentIssueID {
 			return db.ErrParentMismatch
 		}
-		if err := ensureRelayLinkRemovalBoundaryTx(ctx, tx, oldLink, eventIssue); err != nil {
-			return err
-		}
 
 		actor := input.LinkEvent.Actor
 		if actor == "" {

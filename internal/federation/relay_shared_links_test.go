@@ -70,6 +70,17 @@ func TestRelaySharedLinksAcrossHops(t *testing.T) {
 					require.Len(t, links, 1)
 					require.Equal(t, issues[1].UID, links[0].ToIssueUID)
 				}
+				links, err := hubs[0].store.LinksByIssue(ctx, issueIDForRelayMatrix(t, hubs[0], issues[0].UID))
+				require.NoError(t, err)
+				_, err = hubs[0].store.DeleteLinkAndEvent(ctx, links[0], db.LinkEventParams{EventType: "issue.unlinked", EventIssueID: issueIDForRelayMatrix(t, hubs[0], issues[0].UID), Actor: hub.account, FromUID: issues[0].UID, ToUID: issues[1].UID})
+				require.NoError(t, err)
+				syncRelayMatrixNode(t, hubs[0])
+				syncRelayMatrixNode(t, leaves[0])
+				for _, node := range []*relayMatrixNode{root, leaves[0]} {
+					links, err := node.store.LinksByIssue(ctx, issueIDForRelayMatrix(t, node, issues[0].UID))
+					require.NoError(t, err)
+					require.Empty(t, links)
+				}
 				if reverse {
 					return
 				}
@@ -161,8 +172,7 @@ func TestRelaySharedLinksPreflightFeatures(t *testing.T) {
 			_, err = root.store.DeleteLinkAndEvent(db.WithRootAttribution(ctx, root.signer, root.account), link, db.LinkEventParams{EventType: "issue.unlinked", EventIssueID: issues[0].ID, Actor: root.account, FromUID: issues[0].UID, ToUID: issues[1].UID, FromShortID: issues[0].ShortID, ToShortID: issues[1].ShortID})
 			require.NoError(t, err)
 			status, body = get(oldFeatures)
-			require.Equal(t, http.StatusConflict, status, body)
-			require.Contains(t, body, db.RelayCrossLinksEventFeature)
+			require.Equal(t, http.StatusOK, status, body)
 			status, body = get(db.SupportedEventFeatures)
 			require.Equal(t, http.StatusOK, status, body)
 		})

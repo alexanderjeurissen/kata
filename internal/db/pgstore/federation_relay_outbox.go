@@ -96,10 +96,7 @@ func (d *Store) PendingRelayDeliveries(ctx context.Context, bindingUID, stream s
 				return err
 			}
 			output, ids = output[:len(events)], ids[:len(events)]
-			lookup := eventIssueLookup(db.WithoutIssueRegistries(db.WithAuthorizedProjects(ctx, nil)), tx)
-			if err := db.AuthorizeRelayRelease(ctx, tx, lookup, projectUID, events); err != nil {
-				return err
-			}
+
 		}
 		for _, id := range ids {
 			if _, err := tx.ExecContext(ctx, `UPDATE federation_relay_outbox SET emitted=1 WHERE id=$1`, id); err != nil {

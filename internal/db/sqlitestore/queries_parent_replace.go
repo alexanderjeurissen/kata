@@ -75,9 +75,6 @@ func (d *Store) replaceParentAndEventsTx(
 	if err != nil {
 		return result, err
 	}
-	if err := ensureRelayLinkRemovalBoundaryTx(ctx, tx, oldLink, eventIssue); err != nil {
-		return result, err
-	}
 	actor := input.LinkEvent.Actor
 	if actor == "" {
 		actor = input.Link.Author

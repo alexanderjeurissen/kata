@@ -366,7 +366,7 @@ while an endpoint is missing and project it after both endpoints arrive. A peer 
 `relay_cross_links_v1` receives `409 unsupported_event_features` before receiving a
 crossing event or checkpoint. The event stream pauses at the crossing until the peer is
 upgraded. Relays check current access to resolvable peer projects before release.
-A direct replica's parent edit loses to a root cross-project parent when relay enrollment starts.
+They withhold events and checkpoints when a linked issue has not arrived.
 For direct spokes, a missing link peer is not a permanent validation failure. The hub accepts
 the event, advances the push cursor, and keeps the edge absent until both endpoint issues are
 materialized inside one compatible federation group. Hub projects on one daemon form a group.

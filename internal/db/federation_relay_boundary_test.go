@@ -1,7 +1,9 @@
 package db
 
 import (
+	"context"
 	"encoding/json/jsontext"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -76,6 +78,36 @@ func TestRelayEventPeerProjectsWithholdsUnresolvedLinks(t *testing.T) {
 		t.Run(tc.kind, func(t *testing.T) {
 			err := RelayEventPeerProjects(RemoteEvent{ProjectUID: "own", Type: tc.kind, Payload: jsontext.Value(tc.payload)}, lookup, func(string) error { return nil })
 			require.ErrorIs(t, err, ErrRelayLinkUnresolved)
+		})
+	}
+}
+
+func TestAuthorizeRelayReleaseCrossingEvents(t *testing.T) {
+	own, peer := "own-issue", "peer-issue"
+	lookup := NewEventIssueLookup(func(uid string) (Issue, error) {
+		switch uid {
+		case own:
+			return Issue{ProjectUID: "own"}, nil
+		case peer:
+			return Issue{ProjectUID: "peer"}, nil
+		default:
+			return Issue{}, ErrNotFound
+		}
+	}, nil, nil)
+	denied := errors.New("denied")
+	ctx := WithProjectAccessTransactionCheck(t.Context(), func(_ context.Context, _ Transaction, uid string) error {
+		if uid == "peer" {
+			return denied
+		}
+		return nil
+	})
+	for _, kind := range []string{"issue.linked", "issue.unlinked"} {
+		event := RemoteEvent{ProjectUID: "own", IssueUID: &own, Type: kind, Payload: jsontext.Value(`{"from_uid":"own-issue","to_uid":"peer-issue"}`)}
+		t.Run(kind, func(t *testing.T) {
+			require.ErrorIs(t, AuthorizeRelayRelease(ctx, nil, lookup, "own", []RemoteEvent{event}), ErrUnsupportedEventFeatures)
+			supported := WithRelayPeerEventFeatures(ctx, RelayCrossLinksEventFeature)
+			require.ErrorIs(t, AuthorizeRelayRelease(supported, nil, lookup, "own", []RemoteEvent{event}), denied)
+			require.NoError(t, AuthorizeRelayRelease(WithRelayPeerEventFeatures(t.Context(), RelayCrossLinksEventFeature), nil, lookup, "own", []RemoteEvent{event}))
 		})
 	}
 }

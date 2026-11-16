@@ -15,8 +15,6 @@ import (
 type RelayResetBackend interface {
 	// AuthorizeRelayRelease checks the projects referenced by a checkpoint.
 	AuthorizeRelayRelease(ctx context.Context, projectUID string, events []RemoteEvent) error
-	// IssueProjectUID resolves an endpoint or returns an empty UID when absent.
-	IssueProjectUID(ctx context.Context, issueUID string) (string, error)
 	// ProjectUID returns the UID of a project row.
 	ProjectUID(ctx context.Context, projectID int64) (string, error)
 	// RelayBinding loads the project's federation binding, or ErrNotFound.

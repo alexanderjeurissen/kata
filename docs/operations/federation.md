@@ -156,6 +156,8 @@ before enrollment.
 
 The common root can link issues in projects that share a relay binding group and root authority. Preflight and connect return `409 relay_cross_project_links` for links outside that group. The root authors crossing links and relays forward them; a missing endpoint stays deferred until it arrives. An older peer receives the events before a crossing, then the stream pauses until the peer is upgraded.
 
+Relays withhold events and checkpoints that reference a linked issue until the issue arrives. They also check the peer's current access to each referenced project before release.
+
 Fresh direct-spoke pushes also reject additions, close parents, and
 duplicate or superseded evidence that name a stored sibling issue when either
 project has a relay binding or an active relay enrollment. The whole batch
