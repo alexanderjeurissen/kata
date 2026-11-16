@@ -64,3 +64,18 @@ func TestRelayEventPeerProjects(t *testing.T) {
 		})
 	}
 }
+
+func TestRelayEventPeerProjectsWithholdsUnresolvedLinks(t *testing.T) {
+	lookup := NewEventIssueLookup(func(string) (Issue, error) { return Issue{}, ErrNotFound }, func(string, string) (Issue, error) { return Issue{}, ErrNotFound }, func(string) (Issue, error) { return Issue{}, ErrNotFound })
+	for _, tc := range []struct{ kind, payload string }{
+		{"issue.linked", `{"from_uid":"missing"}`},
+		{"issue.unlinked", `{"to_uid":"missing"}`},
+		{"issue.links_changed", `{"related_added_uids":["missing"]}`},
+		{"issue.snapshot", `{"links":[{"to_issue_uid":"missing"}]}`},
+	} {
+		t.Run(tc.kind, func(t *testing.T) {
+			err := RelayEventPeerProjects(RemoteEvent{ProjectUID: "own", Type: tc.kind, Payload: jsontext.Value(tc.payload)}, lookup, func(string) error { return nil })
+			require.ErrorIs(t, err, ErrNotFound)
+		})
+	}
+}

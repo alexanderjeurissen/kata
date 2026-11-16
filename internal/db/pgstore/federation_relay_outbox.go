@@ -91,19 +91,11 @@ func (d *Store) PendingRelayDeliveries(ctx context.Context, bindingUID, stream s
 			return err
 		}
 		if stream == db.RelayStreamEvent {
-			count, err := db.RelayEventFeaturePrefix(ctx, relayResetBackend{tx: tx}, projectUID, output)
+			events, err := db.RelayEventFeaturePrefix(ctx, relayResetBackend{tx: tx}, projectUID, output)
 			if err != nil {
 				return err
 			}
-			output, ids = output[:count], ids[:count]
-			events := make([]db.RemoteEvent, 0, count)
-			for _, envelope := range output {
-				event, err := db.DecodeRelaySourceEvent(envelope.Body)
-				if err != nil {
-					return err
-				}
-				events = append(events, event)
-			}
+			output, ids = output[:len(events)], ids[:len(events)]
 			lookup := eventIssueLookup(db.WithoutIssueRegistries(db.WithAuthorizedProjects(ctx, nil)), tx)
 			if err := db.AuthorizeRelayRelease(ctx, tx, lookup, projectUID, events); err != nil {
 				return err

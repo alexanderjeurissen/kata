@@ -31,6 +31,19 @@ func RelayEventPeerProjects(event RemoteEvent, lookup *EventIssueLookup, visit f
 		issue, err := lookup.IssueByUID(uid)
 		return add(issue, err)
 	}
+	linkUID := func(uid string) (bool, error) {
+		if uid == "" {
+			return false, nil
+		}
+		issue, err := lookup.IssueByUID(uid)
+		if err != nil {
+			return false, err
+		}
+		if issue.ProjectUID == "" {
+			return false, ErrNotFound
+		}
+		return false, visit(issue.ProjectUID)
+	}
 	issueRef := func(ref string) (bool, error) {
 		if ref == "" {
 			return false, nil
@@ -69,18 +82,23 @@ func RelayEventPeerProjects(event RemoteEvent, lookup *EventIssueLookup, visit f
 			}
 		}
 	case "issue.linked", "issue.unlinked":
+		if event.RelatedIssueUID != nil {
+			if _, err := linkUID(*event.RelatedIssueUID); err != nil {
+				return err
+			}
+		}
 		var payload map[string]jsontext.Value
 		if json.Unmarshal(event.Payload, &payload) == nil {
-			for _, key := range []string{"from_uid", "to_uid"} {
+			for _, key := range []string{"from_uid", "to_uid", "from_issue_uid", "to_issue_uid", "link_from_uid", "link_to_uid"} {
 				if uid, ok := StringValue(payload[key]); ok && uid != "" {
-					if _, err := issueUID(uid); err != nil {
+					if _, err := linkUID(uid); err != nil {
 						return err
 					}
 				}
 			}
 		}
 	}
-	_, err := walkEventProjectReferences(Event{ProjectUID: event.ProjectUID, RelatedIssueUID: event.RelatedIssueUID, Type: event.Type, Payload: string(event.Payload)}, issueUID, issueRef, comment, project)
+	_, err := walkEventProjectReferences(Event{ProjectUID: event.ProjectUID, RelatedIssueUID: event.RelatedIssueUID, Type: event.Type, Payload: string(event.Payload)}, issueUID, linkUID, issueRef, comment, project)
 	if err != nil {
 		return err
 	}

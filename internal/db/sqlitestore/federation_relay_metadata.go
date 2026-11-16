@@ -3,7 +3,6 @@ package sqlitestore
 import (
 	"context"
 	"database/sql"
-	"encoding/json/jsontext"
 	"errors"
 
 	"go.kenn.io/kata/internal/db"
@@ -38,8 +37,11 @@ func (d *Store) RelayMetadataRequiresCrossLinks(ctx context.Context, projectID i
 			return false, db.ErrNotFound
 		}
 	}
-	required := func(event db.RemoteEvent) (bool, error) {
-		feature, err := db.RelayContentRequiredFeatures(event, pin.AuthorityUID, func(uid string) (string, error) {
+	return db.ScanRelayMetadataFeatures(project.UID, pin.AuthorityUID, unpinned,
+		func(after int64) ([]db.Event, error) { return relayCheckpointEventPageTx(ctx, tx, projectID, after) },
+		func() ([]db.RelayCheckpointIssue, error) { return d.relayCheckpointIssuesTx(ctx, tx, projectID) },
+		func(event db.RemoteEvent) (bool, error) { return relayEventCrossesProjectTx(ctx, tx, projectID, event) },
+		func(uid string) (string, error) {
 			var projectUID string
 			var peerID int64
 			err := tx.QueryRowContext(ctx, `SELECT p.uid,p.id FROM issues i JOIN projects p ON p.id=i.project_id WHERE i.uid=?`, uid).Scan(&projectUID, &peerID)
@@ -58,41 +60,4 @@ func (d *Store) RelayMetadataRequiresCrossLinks(ctx context.Context, projectID i
 			}
 			return projectUID, nil
 		})
-		return feature != "", err
-	}
-	for after := int64(0); ; {
-		events, err := relayCheckpointEventPageTx(ctx, tx, projectID, after)
-		if err != nil {
-			return false, err
-		}
-		if len(events) == 0 {
-			break
-		}
-		for _, event := range events {
-			remote := db.RemoteEventFromStored(event)
-			crosses, err := relayEventCrossesProjectTx(ctx, tx, projectID, remote)
-			if err != nil {
-				return false, err
-			}
-			if !crosses || (unpinned && remote.OriginInstanceUID == pin.AuthorityUID) {
-				needed, err := required(remote)
-				if needed || err != nil {
-					return needed, err
-				}
-			}
-		}
-		after = events[len(events)-1].ID
-	}
-	issues, err := d.relayCheckpointIssuesTx(ctx, tx, projectID)
-	if err != nil {
-		return false, err
-	}
-	for _, issue := range issues {
-		event := db.RemoteEvent{ProjectUID: project.UID, OriginInstanceUID: pin.AuthorityUID, IssueUID: &issue.IssueUID, Type: "issue.snapshot", Payload: jsontext.Value(issue.Payload)}
-		needed, err := required(event)
-		if needed || err != nil {
-			return needed, err
-		}
-	}
-	return false, nil
 }

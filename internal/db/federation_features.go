@@ -392,31 +392,33 @@ func RelayPeerEventFeatures(ctx context.Context) string {
 func RelayEventFeaturePrefix(ctx context.Context, backend interface {
 	RootPin(context.Context, string, string) (RootKeyPin, error)
 	IssueProjectUID(context.Context, string) (string, error)
-}, projectUID string, envelopes []RelayEnvelope) (int, error) {
+}, projectUID string, envelopes []RelayEnvelope) ([]RemoteEvent, error) {
 	if len(envelopes) == 0 {
-		return 0, nil
+		return nil, nil
 	}
 	pin, err := backend.RootPin(ctx, projectUID, "")
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
+	events := make([]RemoteEvent, 0, len(envelopes))
 	for i, envelope := range envelopes {
 		event, err := DecodeRelaySourceEvent(envelope.Body)
 		if err != nil {
-			return 0, err
+			return nil, err
 		}
 		required, err := RelayContentRequiredFeatures(event, pin.AuthorityUID, func(uid string) (string, error) { return backend.IssueProjectUID(ctx, uid) })
 		if err != nil {
-			return 0, err
+			return nil, err
 		}
 		if err := RequireEventFeatures(RelayPeerEventFeatures(ctx), required); err != nil {
 			if i == 0 {
-				return 0, err
+				return nil, err
 			}
-			return i, nil
+			return events, nil
 		}
+		events = append(events, event)
 	}
-	return len(envelopes), nil
+	return events, nil
 }
 
 // RelayContentRequiredFeatures identifies root links a peer must understand.
