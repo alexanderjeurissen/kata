@@ -181,11 +181,14 @@ func RunRelayLinkBoundaryFollowsActiveGrants(t *testing.T, store db.Storage, bac
 
 	replica := backend.Open(t)
 	t.Cleanup(func() { require.NoError(t, replica.Close()) })
-	grant, err = store.CreateRelayEnrollment(ctx, db.CreateRelayEnrollmentParams{ProjectID: fixture.project.ID, ParentTokenID: fixture.parentTokenID, SpokeInstanceUID: replica.InstanceUID(), ProtocolVersion: db.RelayProtocolVersion})
+	grant, err = store.CreateRelayEnrollment(ctx, db.CreateRelayEnrollmentParams{ProjectID: fixture.project.ID, ParentTokenID: fixture.parentTokenID, SpokeInstanceUID: replica.InstanceUID(), ProtocolVersion: db.RelayProtocolVersion, ServeDownstream: true})
 	require.NoError(t, err)
 	require.NoError(t, store.MaterializeFederatedProject(ctx, fixture.project.ID))
 	require.Empty(t, linkTargetUIDs(t, store, source.ID), "enrollment must preserve the earlier direct unlink")
 	features := db.WithRelayPeerEventFeatures(ctx, db.SupportedEventFeatures)
+	offeredAtRoot, err := store.PendingRelayDeliveries(features, grant.Enrollment.RelayBindingUID, db.RelayStreamEvent, 100)
+	require.NoError(t, err)
+	require.NotEmpty(t, offeredAtRoot)
 	checkpoint, err := store.(db.RelayResetStore).CreateRelayReset(features, grant.Enrollment.RelayBindingUID, fixture.signer)
 	require.NoError(t, err)
 	public := fixture.signer.PrivateKey.Public().(ed25519.PublicKey)
@@ -213,39 +216,83 @@ func RunRelayLinkBoundaryFollowsActiveGrants(t *testing.T, store db.Storage, bac
 	require.NoError(t, replica.PinRootAuthority(ctx, pin))
 	_, err = replica.UpsertFederationBinding(ctx, db.FederationBinding{ProjectID: replicaProject.ID, Role: db.FederationRoleSpoke, HubURL: "https://daemon.example", HubProjectID: fixture.project.ID, HubProjectUID: fixture.project.UID, Actor: "member", Enabled: true, PushEnabled: true})
 	require.NoError(t, err)
-	_, err = replica.SetRelayBindingConfig(ctx, replicaProject.ID, db.RelayBindingConfig{ProtocolVersion: db.RelayProtocolVersion, BindingUID: grant.Enrollment.RelayBindingUID, AuthorityUID: store.InstanceUID(), UpstreamInstanceUID: store.InstanceUID(), HubPath: []string{store.InstanceUID(), replica.InstanceUID()}, LocalActor: "member", ResetEpoch: 1})
+	_, err = replica.SetRelayBindingConfig(ctx, replicaProject.ID, db.RelayBindingConfig{ProtocolVersion: db.RelayProtocolVersion, BindingUID: grant.Enrollment.RelayBindingUID, AuthorityUID: store.InstanceUID(), UpstreamInstanceUID: store.InstanceUID(), HubPath: []string{store.InstanceUID(), replica.InstanceUID()}, LocalActor: "member", ServeDownstream: true, ResetEpoch: 1})
 	require.NoError(t, err)
-	var sequence int64
-	for _, kind := range []string{"issue.created", "issue.linked", "issue.unlinked"} {
-		for _, event := range events {
-			if event.Type != kind || event.IssueUID == nil || *event.IssueUID != source.UID {
-				continue
-			}
-			sequence++
-			body, err := db.EncodeRelaySourceEvent(event)
-			require.NoError(t, err)
-			path := []string{store.InstanceUID()}
-			if event.OriginInstanceUID != store.InstanceUID() {
-				path = []string{event.OriginInstanceUID, store.InstanceUID()}
-			}
-			envelope, err := db.SealRelayEnvelope(db.RelayEnvelope{Version: db.RelayProtocolVersion, BindingUID: grant.Enrollment.RelayBindingUID, ProjectUID: fixture.project.UID, AuthorityUID: store.InstanceUID(), SenderInstanceUID: store.InstanceUID(), ReceiverInstanceUID: replica.InstanceUID(), Epoch: grant.Enrollment.RelayResetEpoch, Sequence: sequence, Stream: db.RelayStreamEvent, Path: path, SourceUID: event.EventUID, SourceHash: event.ContentHash, Body: body})
-			require.NoError(t, err)
-			_, err = replica.AcceptRelayDeliveries(ctx, grant.Enrollment.RelayBindingUID, db.RelayBatch{After: sequence - 1, Stream: db.RelayStreamEvent, Envelopes: []db.RelayEnvelope{envelope}})
-			require.NoError(t, err, "root-forwarded %s must be accepted", kind)
+
+	leaf := backend.Open(t)
+	t.Cleanup(func() { require.NoError(t, leaf.Close()) })
+	parent, _, err := replica.CreateAPIToken(ctx, db.CreateAPITokenParams{Actor: "member", AdminActor: "admin", PlaintextToken: "relay-forward-parent-test-token"})
+	require.NoError(t, err)
+	leafPeerGrant, err := store.CreateRelayEnrollment(ctx, db.CreateRelayEnrollmentParams{ProjectID: fixture.sibling.ID, ParentTokenID: fixture.parentTokenID, SpokeInstanceUID: leaf.InstanceUID(), ProtocolVersion: db.RelayProtocolVersion})
+	require.NoError(t, err)
+	leafPeerCheckpoint, err := store.(db.RelayResetStore).CreateRelayReset(features, leafPeerGrant.Enrollment.RelayBindingUID, fixture.signer)
+	require.NoError(t, err)
+	leafPeer, err := leaf.CreateProjectWithUID(ctx, "leaf-peer", fixture.sibling.UID)
+	require.NoError(t, err)
+	require.NoError(t, leaf.PinRootAuthority(ctx, peerPin))
+	_, err = leaf.UpsertFederationBinding(ctx, db.FederationBinding{ProjectID: leafPeer.ID, Role: db.FederationRoleSpoke, HubURL: "https://daemon.example", HubProjectID: fixture.sibling.ID, HubProjectUID: fixture.sibling.UID, Actor: "member", Enabled: true, PushEnabled: true})
+	require.NoError(t, err)
+	_, err = leaf.SetRelayBindingConfig(ctx, leafPeer.ID, db.RelayBindingConfig{ProtocolVersion: db.RelayProtocolVersion, BindingUID: leafPeerGrant.Enrollment.RelayBindingUID, AuthorityUID: store.InstanceUID(), UpstreamInstanceUID: store.InstanceUID(), HubPath: []string{store.InstanceUID(), leaf.InstanceUID()}, LocalActor: "member", ResetEpoch: 1})
+	require.NoError(t, err)
+	require.NoError(t, leaf.(db.RelayResetStore).InstallRelayReset(ctx, leafPeerGrant.Enrollment.RelayBindingUID, leafPeerCheckpoint.Manifest, leafPeerCheckpoint.Snapshot, leafPeerCheckpoint.Translation))
+	leafGrant, err := replica.CreateRelayEnrollment(ctx, db.CreateRelayEnrollmentParams{ProjectID: replicaProject.ID, ParentTokenID: parent.ID, SpokeInstanceUID: leaf.InstanceUID(), ProtocolVersion: db.RelayProtocolVersion})
+	require.NoError(t, err)
+	leafProject, err := leaf.CreateProjectWithUID(ctx, "leaf-project", fixture.project.UID)
+	require.NoError(t, err)
+	require.NoError(t, leaf.PinRootAuthority(ctx, pin))
+	_, err = leaf.UpsertFederationBinding(ctx, db.FederationBinding{ProjectID: leafProject.ID, Role: db.FederationRoleSpoke, HubURL: "https://daemon.example", HubProjectID: replicaProject.ID, HubProjectUID: fixture.project.UID, Actor: "member", Enabled: true, PushEnabled: true})
+	require.NoError(t, err)
+	_, err = leaf.SetRelayBindingConfig(ctx, leafProject.ID, db.RelayBindingConfig{ProtocolVersion: db.RelayProtocolVersion, BindingUID: leafGrant.Enrollment.RelayBindingUID, AuthorityUID: store.InstanceUID(), UpstreamInstanceUID: replica.InstanceUID(), HubPath: []string{store.InstanceUID(), replica.InstanceUID(), leaf.InstanceUID()}, LocalActor: "member", ResetEpoch: 1})
+	require.NoError(t, err)
+	var rootAfter, leafAfter int64
+	var sawLink, sawUnlink bool
+	for _, envelope := range offeredAtRoot {
+		event, err := db.DecodeRelaySourceEvent(envelope.Body)
+		require.NoError(t, err)
+		_, err = replica.AcceptRelayDeliveries(ctx, grant.Enrollment.RelayBindingUID, db.RelayBatch{After: rootAfter, Stream: db.RelayStreamEvent, Envelopes: []db.RelayEnvelope{envelope}})
+		require.NoError(t, err, "root-forwarded %s must be accepted", event.Type)
+		rootAfter = envelope.Sequence
+		require.NoError(t, store.AckRelayDeliveries(ctx, grant.Enrollment.RelayBindingUID, grant.Enrollment.RelayResetEpoch, db.RelayStreamEvent, envelope.Sequence, envelope.Digest))
+		offered, err := replica.PendingRelayDeliveries(features, leafGrant.Enrollment.RelayBindingUID, db.RelayStreamEvent, 100)
+		require.NoError(t, err)
+		require.Len(t, offered, 1)
+		require.Equal(t, envelope.SourceUID, offered[0].SourceUID)
+		require.Equal(t, append(append([]string(nil), envelope.Path...), replica.InstanceUID()), offered[0].Path)
+		_, err = leaf.AcceptRelayDeliveries(ctx, leafGrant.Enrollment.RelayBindingUID, db.RelayBatch{After: leafAfter, Stream: db.RelayStreamEvent, Envelopes: offered})
+		require.NoError(t, err)
+		leafAfter = offered[0].Sequence
+		require.NoError(t, replica.AckRelayDeliveries(ctx, leafGrant.Enrollment.RelayBindingUID, leafGrant.Enrollment.RelayResetEpoch, db.RelayStreamEvent, offered[0].Sequence, offered[0].Digest))
+		if event.IssueUID == nil || *event.IssueUID != source.UID {
+			continue
+		}
+		if event.Type == "issue.linked" || event.EventUID == unlink.EventUID {
 			replicaIssue, err := replica.IssueByUID(ctx, source.UID, db.IncludeDeletedYes)
 			require.NoError(t, err)
-			if kind == "issue.linked" {
+			leafIssue, err := leaf.IssueByUID(ctx, source.UID, db.IncludeDeletedYes)
+			require.NoError(t, err)
+			if event.Type == "issue.linked" {
+				sawLink = true
 				require.Equal(t, []string{target.UID}, linkTargetUIDs(t, replica, replicaIssue.ID))
-			} else if kind == "issue.unlinked" {
+				require.Equal(t, []string{target.UID}, linkTargetUIDs(t, leaf, leafIssue.ID))
+			} else {
+				sawUnlink = true
 				require.Empty(t, linkTargetUIDs(t, replica, replicaIssue.ID))
+				require.Empty(t, linkTargetUIDs(t, leaf, leafIssue.ID))
 			}
 		}
 	}
-	require.EqualValues(t, 3, sequence)
+	require.True(t, sawLink)
+	require.True(t, sawUnlink, "the root outbox must forward the pre-enrollment unlink")
 	require.NoError(t, replica.(db.RelayResetStore).InstallRelayReset(ctx, grant.Enrollment.RelayBindingUID, checkpoint.Manifest, checkpoint.Snapshot, checkpoint.Translation))
 	replicaIssue, err := replica.IssueByUID(ctx, source.UID, db.IncludeDeletedYes)
 	require.NoError(t, err)
 	require.Empty(t, linkTargetUIDs(t, replica, replicaIssue.ID), "the checkpoint must not restore the removed link")
+	forwarded, err := replica.(db.RelayResetStore).CreateRelayReset(features, leafGrant.Enrollment.RelayBindingUID, db.RootAttributionSigner{})
+	require.NoError(t, err)
+	require.NoError(t, leaf.(db.RelayResetStore).InstallRelayReset(ctx, leafGrant.Enrollment.RelayBindingUID, forwarded.Manifest, forwarded.Snapshot, forwarded.Translation))
+	leafIssue, err := leaf.IssueByUID(ctx, source.UID, db.IncludeDeletedYes)
+	require.NoError(t, err)
+	require.Empty(t, linkTargetUIDs(t, leaf, leafIssue.ID), "the forwarded checkpoint must not restore the removed link")
 
 	_, _, err = store.CreateLinkAndEvent(ctx, db.CreateLinkParams{FromIssueID: source.ID, ToIssueID: target.ID, Type: "blocks", Author: "member"}, linkEvent)
 	require.NoError(t, err)
