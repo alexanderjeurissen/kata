@@ -141,7 +141,7 @@ func RunLegacyRelayAdmission(t *testing.T, store db.Storage) {
 					require.NoError(t, err)
 					peer.ShortID = strings.ToLower(peer.UID)
 				}
-				primary, _, err := store.CreateIssue(ctx, db.CreateIssueParams{ProjectID: fixture.project.ID, Title: "Primary", Author: "member"})
+				primary, primaryEvent, err := store.CreateIssue(ctx, db.CreateIssueParams{ProjectID: fixture.project.ID, Title: "Primary", Author: "member"})
 				require.NoError(t, err)
 				relayProject := fixture.project
 				if mode == "relayed peer" {
@@ -261,9 +261,14 @@ func RunLegacyRelayAdmission(t *testing.T, store db.Storage) {
 				if mode == "missing" && (kind == "creation" || kind == "snapshot") {
 					features := db.WithRelayPeerEventFeatures(ctx, db.SupportedEventFeatures)
 					binding := grant.Enrollment.RelayBindingUID
-					before := relayStateForBinding(t, store, binding)
 					out, err := store.PendingRelayDeliveries(features, binding, db.RelayStreamEvent, 100)
-					require.ErrorIs(t, err, db.ErrRelayLinkUnresolved)
+					require.NoError(t, err)
+					require.Len(t, out, 1)
+					require.Equal(t, primaryEvent.UID, out[0].SourceUID)
+					require.NoError(t, store.AckRelayDeliveries(ctx, binding, 1, db.RelayStreamEvent, out[0].Sequence, out[0].Digest))
+					before := relayStateForBinding(t, store, binding)
+					out, err = store.PendingRelayDeliveries(features, binding, db.RelayStreamEvent, 100)
+					require.NoError(t, err)
 					require.Empty(t, out)
 					require.Equal(t, before, relayStateForBinding(t, store, binding))
 					_, _, err = store.CreateIssue(ctx, db.CreateIssueParams{ProjectID: fixture.sibling.ID, UID: peer.UID, Title: "Arrived peer", Author: "member"})
