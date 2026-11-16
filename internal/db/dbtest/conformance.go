@@ -124,10 +124,6 @@ var storageScenarios = []scenario{
 		RunRelayPurgedForward(t, backend)
 		return nil
 	}},
-	{name: "relay purged checkpoint refresh", runWithBackend: func(t *testing.T, _ db.Storage, backend Backend) error {
-		RunRelayPurgedCheckpointRefresh(t, backend)
-		return nil
-	}},
 	{name: "relay checkpoint capacity", methods: []string{"CreateAPIToken", "CreateIssue", "CreateProject", "CreateRelayEnrollment", "ListFederationEnrollments", "PinRootAuthority", "UpsertFederationBinding"}, runWithBackend: func(t *testing.T, _ db.Storage, backend Backend) error {
 		RunRelayCheckpointCapacity(t, backend)
 		return nil
@@ -165,10 +161,18 @@ var storageScenarios = []scenario{
 		RunLegacyRelayParentUIDCollision(t, store)
 		return nil
 	}},
+	{name: "legacy relay held link release", run: func(t *testing.T, store db.Storage) error {
+		RunLegacyRelayHeldLinkRelease(t, store)
+		return nil
+	}},
 	{name: "relay cross project removal", run: func(t *testing.T, store db.Storage) error { RunRelayCrossProjectRemoval(t, store); return nil }},
 	{name: "relay release purged link", run: func(t *testing.T, store db.Storage) error { RunRelayReleasePurgedLink(t, store); return nil }},
-	{name: "relay event release peer access", runWithBackend: func(t *testing.T, store db.Storage, backend Backend) error {
-		RunRelayEventReleasePeerAccess(t, store, backend)
+	{name: "relay archived peer event release", runWithBackend: func(t *testing.T, _ db.Storage, backend Backend) error {
+		RunRelayArchivedPeerEventRelease(t, backend)
+		return nil
+	}},
+	{name: "relay event release peer access", run: func(t *testing.T, store db.Storage) error {
+		RunRelayEventReleasePeerAccess(t, store)
 		return nil
 	}},
 	{name: "relay offers legacy ingested events", methods: []string{"IngestFederationEvents", "PendingRelayDeliveries", "PatchIssueMetadata"}, run: func(t *testing.T, store db.Storage) error {

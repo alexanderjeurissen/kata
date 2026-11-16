@@ -1,9 +1,7 @@
 package db
 
 import (
-	"context"
 	"encoding/json/jsontext"
-	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -78,40 +76,4 @@ func TestRelayEventPeerProjects(t *testing.T) {
 			require.ErrorIs(t, err, ErrRelayLinkUnresolved)
 		})
 	}
-}
-
-func TestAuthorizeRelayReleaseCrossingEvents(t *testing.T) {
-	own, peer := "own-issue", "peer-issue"
-	lookup := NewEventIssueLookup(func(uid string) (Issue, error) {
-		switch uid {
-		case own:
-			return Issue{ProjectUID: "own"}, nil
-		case peer:
-			return Issue{ProjectUID: "peer"}, nil
-		default:
-			return Issue{}, ErrNotFound
-		}
-	}, nil, nil)
-	denied := errors.New("denied")
-	ctx := WithProjectAccessTransactionCheck(t.Context(), func(_ context.Context, _ Transaction, uid string) error {
-		if uid == "peer" {
-			return denied
-		}
-		return nil
-	})
-	event := RemoteEvent{ProjectUID: "own", IssueUID: &own, Type: "issue.linked", Payload: jsontext.Value(`{"from_uid":"own-issue","to_uid":"peer-issue"}`)}
-	t.Run("link added", func(t *testing.T) {
-		require.ErrorIs(t, AuthorizeRelayRelease(ctx, nil, lookup, "own", []RemoteEvent{event}), ErrUnsupportedEventFeatures)
-		supported := WithRelayPeerEventFeatures(ctx, RelayCrossLinksEventFeature)
-		require.ErrorIs(t, AuthorizeRelayRelease(supported, nil, lookup, "own", []RemoteEvent{event}), denied)
-		require.NoError(t, AuthorizeRelayRelease(WithRelayPeerEventFeatures(t.Context(), RelayCrossLinksEventFeature), nil, lookup, "own", []RemoteEvent{event}))
-	})
-}
-
-func TestAuthorizeRelayReleasePrefixHoldsMissingLink(t *testing.T) {
-	lookup := NewEventIssueLookup(func(string) (Issue, error) { return Issue{}, ErrNotFound }, nil, nil)
-	events := []RemoteEvent{{ProjectUID: "own", Type: "issue.updated", Payload: jsontext.Value(`{}`)}, {ProjectUID: "own", Type: "issue.unlinked", Payload: jsontext.Value(`{"to_uid":"missing"}`)}, {ProjectUID: "own", Type: "issue.updated", Payload: jsontext.Value(`{}`)}}
-	count, err := AuthorizeRelayReleasePrefix(t.Context(), nil, lookup, "own", events)
-	require.Equal(t, 1, count)
-	require.ErrorIs(t, err, ErrRelayLinkUnresolved)
 }

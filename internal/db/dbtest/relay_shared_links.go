@@ -22,7 +22,7 @@ type RelaySharedAccessFixture struct {
 }
 
 // RunRelayEventReleasePeerAccess checks access before offering events and moved issue snapshots.
-func RunRelayEventReleasePeerAccess(t *testing.T, store db.Storage, backend Backend) {
+func RunRelayEventReleasePeerAccess(t *testing.T, store db.Storage) {
 	ctx := t.Context()
 	fixture := NewRelaySharedAccessFixture(t, store)
 	features := db.WithRelayPeerEventFeatures(ctx, db.SupportedEventFeatures)
@@ -115,8 +115,6 @@ func RunRelayEventReleasePeerAccess(t *testing.T, store db.Storage, backend Back
 	require.NoError(t, err)
 	require.NotEmpty(t, offered)
 	require.Equal(t, moved.Event.UID, offered[len(offered)-1].SourceUID)
-	RunLegacyRelayHeldLinkRelease(t, store)
-	RunRelayArchivedPeerEventRelease(t, backend)
 }
 
 // RunRelayArchivedPeerEventRelease checks that an archived endpoint doesn't
@@ -132,56 +130,15 @@ func RunRelayArchivedPeerEventRelease(t *testing.T, backend Backend) {
 		leaf := backend.Open(t)
 		t.Cleanup(func() { require.NoError(t, leaf.Close()) })
 		fixture := NewRelaySharedAccessFixture(t, root)
-		parentTokenID := *fixture.Grant.Enrollment.ParentTokenID
-		enroll := func(upstream, peer db.Storage, project db.Project, name string, downstream bool) (string, int64) {
-			t.Helper()
-			parentID := parentTokenID
-			if upstream != root {
-				parent, _, err := upstream.CreateAPIToken(ctx, db.CreateAPITokenParams{Actor: "member", AdminActor: "admin", PlaintextToken: name + "-parent-test-token"})
-				require.NoError(t, err)
-				parentID = parent.ID
-			}
-			grant, err := upstream.CreateRelayEnrollment(ctx, db.CreateRelayEnrollmentParams{ProjectID: project.ID, ParentTokenID: parentID, SpokeInstanceUID: peer.InstanceUID(), ProtocolVersion: db.RelayProtocolVersion, ServeDownstream: downstream, Token: name + "-relay-test-token"})
-			require.NoError(t, err)
-			local, err := peer.CreateProjectWithUID(ctx, name, project.UID)
-			require.NoError(t, err)
-			pin, err := upstream.RootAuthority(ctx, project.UID)
-			require.NoError(t, err)
-			require.NoError(t, peer.PinRootAuthority(ctx, pin))
-			_, err = peer.UpsertFederationBinding(ctx, db.FederationBinding{ProjectID: local.ID, Role: db.FederationRoleSpoke, HubURL: "https://hub.example", HubProjectID: project.ID, HubProjectUID: project.UID, Actor: "member", Enabled: true, PushEnabled: true})
-			require.NoError(t, err)
-			path := []string{pin.AuthorityUID, peer.InstanceUID()}
-			if upstream.InstanceUID() != pin.AuthorityUID {
-				path = []string{pin.AuthorityUID, upstream.InstanceUID(), peer.InstanceUID()}
-			}
-			_, err = peer.SetRelayBindingConfig(ctx, local.ID, db.RelayBindingConfig{ProtocolVersion: db.RelayProtocolVersion, BindingUID: grant.Enrollment.RelayBindingUID, AuthorityUID: pin.AuthorityUID, UpstreamInstanceUID: upstream.InstanceUID(), HubPath: path, LocalActor: "member", ServeDownstream: downstream, ResetEpoch: grant.Enrollment.RelayResetEpoch})
-			require.NoError(t, err)
-			return grant.Enrollment.RelayBindingUID, grant.Enrollment.RelayResetEpoch
-		}
-		syncEvents := func(binding string, epoch int64, from, to db.Storage) {
-			t.Helper()
-			for _, stream := range []string{db.RelayStreamEvent, db.RelayStreamReceipt, db.RelayStreamArtifact} {
-				for {
-					items, err := from.PendingRelayDeliveries(features, binding, stream, 100)
-					require.NoError(t, err)
-					if len(items) == 0 {
-						break
-					}
-					_, err = to.AcceptRelayDeliveries(ctx, binding, db.RelayBatch{Stream: stream, Envelopes: items})
-					require.NoError(t, err)
-					last := items[len(items)-1]
-					require.NoError(t, from.AckRelayDeliveries(ctx, binding, epoch, stream, last.Sequence, last.Digest))
-				}
-			}
-		}
-		peerBinding, peerEpoch := enroll(root, replica, fixture.Projects[1], "archive-peer", false)
-		sourceBinding, sourceEpoch := enroll(root, replica, fixture.Projects[0], "archive-source", true)
-		syncEvents(peerBinding, peerEpoch, root, replica)
-		syncEvents(sourceBinding, sourceEpoch, root, replica)
+		streams := []string{db.RelayStreamEvent, db.RelayStreamReceipt, db.RelayStreamArtifact}
+		peerBinding, peerEpoch := setupRelayHop(t, root, replica, fixture.Projects[1], "archive-peer", false)
+		sourceBinding, sourceEpoch := setupRelayHop(t, root, replica, fixture.Projects[0], "archive-source", true)
+		syncRelayHop(t, features, root, replica, peerBinding, peerEpoch, streams...)
+		syncRelayHop(t, features, root, replica, sourceBinding, sourceEpoch, streams...)
 		replicaSource, err := replica.ProjectByUID(ctx, fixture.Projects[0].UID)
 		require.NoError(t, err)
-		leafBinding, leafEpoch := enroll(replica, leaf, replicaSource, "archive-leaf", false)
-		syncEvents(leafBinding, leafEpoch, replica, leaf)
+		leafBinding, leafEpoch := setupRelayHop(t, replica, leaf, replicaSource, "archive-leaf", false)
+		syncRelayHop(t, features, replica, leaf, leafBinding, leafEpoch, streams...)
 		replicaPeer, err := replica.ProjectByUID(ctx, fixture.Projects[1].UID)
 		require.NoError(t, err)
 		_, _, err = replica.RemoveProject(ctx, db.RemoveProjectParams{ProjectID: replicaPeer.ID, Actor: "member", Force: true})
@@ -190,7 +147,7 @@ func RunRelayArchivedPeerEventRelease(t *testing.T, backend Backend) {
 		require.NoError(t, err)
 		_, linkEvent, err := root.CreateLinkAndEvent(db.WithRootAttribution(ctx, fixture.Signer, "member"), db.CreateLinkParams{FromIssueID: newIssue.ID, ToIssueID: fixture.Issues[1].ID, Type: "blocks", Author: "member"}, db.LinkEventParams{EventType: "issue.linked", EventIssueID: newIssue.ID, Actor: "member", FromUID: newIssue.UID, ToUID: fixture.Issues[1].UID, FromShortID: newIssue.ShortID, ToShortID: fixture.Issues[1].ShortID})
 		require.NoError(t, err)
-		syncEvents(sourceBinding, sourceEpoch, root, replica)
+		syncRelayHop(t, features, root, replica, sourceBinding, sourceEpoch, streams...)
 		items, err := replica.PendingRelayDeliveries(features, leafBinding, db.RelayStreamEvent, 100)
 		require.NoError(t, err)
 		var found bool

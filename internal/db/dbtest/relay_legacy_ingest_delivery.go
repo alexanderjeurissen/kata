@@ -108,6 +108,7 @@ func RunRelayOffersLegacyIngestedEvents(t *testing.T, store db.Storage) {
 func RunLegacyRelayAdmission(t *testing.T, store db.Storage) {
 	for kind, modes := range map[string][]string{
 		"creation":           {"sibling", "same project", "relayed peer", "revoked", "missing", "retained"},
+		"snapshot":           {"sibling", "missing"},
 		"single link":        {"sibling"},
 		"composite":          {"sibling"},
 		"parent":             {"sibling"},
@@ -156,10 +157,13 @@ func RunLegacyRelayAdmission(t *testing.T, store db.Storage) {
 				eventType := "issue.linked"
 				payload := `{"type":"related","from_uid":"` + primary.UID + `","to_uid":"` + peer.UID + `"}`
 				switch kind {
-				case "creation":
+				case "creation", "snapshot":
 					primary.UID, err = uid.New()
 					require.NoError(t, err)
 					eventType = "issue.created"
+					if kind == "snapshot" {
+						eventType = "issue.snapshot"
+					}
 					payload = `{"uid":"` + primary.UID + `","short_id":"` + strings.ToLower(primary.UID[len(primary.UID)-4:]) + `","title":"Legacy creation","body":"","author":"member","status":"open","metadata":{},"created_at":"2026-05-23T12:00:00.000Z","links":[{"type":"blocks","to_issue_uid":"` + peer.UID + `","author":"member"}]}`
 				case "composite", "composite cleanup", "parent replacement":
 					eventType = "issue.links_changed"

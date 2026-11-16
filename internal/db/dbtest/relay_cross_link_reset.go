@@ -23,27 +23,6 @@ func RunRelayCrossLinkResetHistory(t *testing.T, root db.Storage, backend Backen
 	_, private, err := ed25519.GenerateKey(nil)
 	require.NoError(t, err)
 	signer := db.RootAttributionSigner{AuthorityUID: root.InstanceUID(), PrivateKey: private}
-	enroll := func(upstream, replica db.Storage, project db.Project, name string, downstream bool) string {
-		t.Helper()
-		parent, _, err := upstream.CreateAPIToken(ctx, db.CreateAPITokenParams{Actor: "member", AdminActor: "admin", PlaintextToken: name + "-parent-test-token"})
-		require.NoError(t, err)
-		grant, err := upstream.CreateRelayEnrollment(ctx, db.CreateRelayEnrollmentParams{ProjectID: project.ID, ParentTokenID: parent.ID, SpokeInstanceUID: replica.InstanceUID(), ProtocolVersion: db.RelayProtocolVersion, ServeDownstream: downstream, Token: name + "-relay-test-token"})
-		require.NoError(t, err)
-		local, err := replica.CreateProjectWithUID(ctx, name, project.UID)
-		require.NoError(t, err)
-		pin, err := upstream.RootAuthority(ctx, project.UID)
-		require.NoError(t, err)
-		require.NoError(t, replica.PinRootAuthority(ctx, pin))
-		_, err = replica.UpsertFederationBinding(ctx, db.FederationBinding{ProjectID: local.ID, Role: db.FederationRoleSpoke, HubURL: "https://hub.example", HubProjectID: project.ID, HubProjectUID: project.UID, Actor: "member", Enabled: true, PushEnabled: true})
-		require.NoError(t, err)
-		path := []string{pin.AuthorityUID, replica.InstanceUID()}
-		if upstream.InstanceUID() != pin.AuthorityUID {
-			path = []string{pin.AuthorityUID, upstream.InstanceUID(), replica.InstanceUID()}
-		}
-		_, err = replica.SetRelayBindingConfig(ctx, local.ID, db.RelayBindingConfig{ProtocolVersion: db.RelayProtocolVersion, BindingUID: grant.Enrollment.RelayBindingUID, AuthorityUID: pin.AuthorityUID, UpstreamInstanceUID: upstream.InstanceUID(), HubPath: path, LocalActor: "member", ServeDownstream: downstream, ResetEpoch: 1})
-		require.NoError(t, err)
-		return grant.Enrollment.RelayBindingUID
-	}
 	var projects [2]db.Project
 	var issues [2]db.Issue
 	for i, name := range []string{"reset-source", "reset-peer"} {
@@ -67,27 +46,10 @@ func RunRelayCrossLinkResetHistory(t *testing.T, root db.Storage, backend Backen
 	_, err = root.IngestFederationEvents(ctx, db.FederationIngestParams{ProjectID: projects[0].ID, SpokeInstanceUID: spokeUID, Events: []db.FederationIngestEvent{{SourceEventID: 1, Event: unlink}}})
 	require.NoError(t, err)
 	require.Empty(t, linkTargetUIDs(t, root, issues[0].ID))
-	peerBinding := enroll(root, hub, projects[1], "reset-peer-hub", true)
-	binding := enroll(root, hub, projects[0], "reset-hub", true)
+	peerBinding, peerEpoch := setupRelayHop(t, root, hub, projects[1], "reset-peer-hub", true)
+	binding, bindingEpoch := setupRelayHop(t, root, hub, projects[0], "reset-hub", true)
 	require.NoError(t, root.MaterializeFederatedProject(ctx, projects[0].ID))
 	require.Empty(t, linkTargetUIDs(t, root, issues[0].ID), "enrollment preserves the direct unlink")
-	deliver := func(t *testing.T) {
-		t.Helper()
-		features := db.WithRelayPeerEventFeatures(ctx, db.SupportedEventFeatures)
-		for _, current := range []string{peerBinding, binding} {
-			for {
-				items, err := root.PendingRelayDeliveries(features, current, db.RelayStreamEvent, 100)
-				require.NoError(t, err)
-				if len(items) == 0 {
-					break
-				}
-				_, err = hub.AcceptRelayDeliveries(ctx, current, db.RelayBatch{Stream: db.RelayStreamEvent, Envelopes: items})
-				require.NoError(t, err)
-				last := items[len(items)-1]
-				require.NoError(t, root.AckRelayDeliveries(ctx, current, 1, db.RelayStreamEvent, last.Sequence, last.Digest))
-			}
-		}
-	}
 	features := db.WithRelayPeerEventFeatures(ctx, db.SupportedEventFeatures)
 	denied := errors.New("peer denied")
 	rejectPeer := db.WithProjectAccessTransactionCheck(features, func(_ context.Context, _ db.Transaction, uid string) error {
@@ -96,7 +58,8 @@ func RunRelayCrossLinkResetHistory(t *testing.T, root db.Storage, backend Backen
 		}
 		return nil
 	})
-	deliver(t)
+	syncRelayHop(t, features, root, hub, peerBinding, peerEpoch, db.RelayStreamEvent)
+	syncRelayHop(t, features, root, hub, binding, bindingEpoch, db.RelayStreamEvent)
 	hubIssue, err := hub.IssueByUID(ctx, issues[0].UID, db.IncludeDeletedYes)
 	require.NoError(t, err)
 	require.Empty(t, linkTargetUIDs(t, hub, hubIssue.ID), "forwarded events preserve the direct unlink")
@@ -130,46 +93,42 @@ func RunRelayCrossLinkResetHistory(t *testing.T, root db.Storage, backend Backen
 		}
 		return metadata
 	}
-	before := relayState(root)
-	eventsBefore := projectEvents(root, projects[0].ID)
-	metaBefore := checkpointMeta(root, projects[0].UID)
-	grants, err := root.ListProjectFederationEnrollments(ctx, projects[0].ID)
-	require.NoError(t, err)
+	type resetState struct {
+		relay  []db.ImportRecord
+		events []db.EventExport
+		meta   []db.MetaKV
+		grants []db.FederationEnrollment
+	}
+	observe := func(store db.Storage, project db.Project) resetState {
+		grants, err := store.ListProjectFederationEnrollments(ctx, project.ID)
+		require.NoError(t, err)
+		return resetState{
+			relay: relayState(store), events: projectEvents(store, project.ID),
+			meta: checkpointMeta(store, project.UID), grants: grants,
+		}
+	}
+	before := observe(root, projects[0])
 	_, err = rootResets.CreateRelayReset(ctx, binding, signer)
 	require.ErrorIs(t, err, db.ErrUnsupportedEventFeatures)
-	require.Equal(t, before, relayState(root))
-	require.Equal(t, eventsBefore, projectEvents(root, projects[0].ID))
-	require.Equal(t, metaBefore, checkpointMeta(root, projects[0].UID))
-	afterGrants, err := root.ListProjectFederationEnrollments(ctx, projects[0].ID)
-	require.NoError(t, err)
-	require.Equal(t, grants, afterGrants)
+	require.Equal(t, before, observe(root, projects[0]))
 	blocked, err := rootResets.CreateRelayReset(rejectPeer, binding, signer)
 	require.ErrorIs(t, err, denied)
 	require.Equal(t, db.RelayResetCheckpoint{}, blocked)
-	require.Equal(t, before, relayState(root))
-	require.Equal(t, eventsBefore, projectEvents(root, projects[0].ID))
-	require.Equal(t, metaBefore, checkpointMeta(root, projects[0].UID))
-	afterGrants, err = root.ListProjectFederationEnrollments(ctx, projects[0].ID)
-	require.NoError(t, err)
-	require.Equal(t, grants, afterGrants)
+	require.Equal(t, before, observe(root, projects[0]))
 	checkpoint, err := rootResets.CreateRelayReset(features, binding, signer)
 	require.NoError(t, err)
 	public := signer.PrivateKey.Public().(ed25519.PublicKey)
 	resetEvents, _, err := db.DecodeRootResetPayload(db.RootKeyPin{ProjectUID: projects[0].UID, AuthorityUID: root.InstanceUID(), KeyID: db.RootPublicKeyID(public), PublicKey: public}, checkpoint.Snapshot)
 	require.NoError(t, err)
 	require.Contains(t, resetEvents, unlink, "the checkpoint retains the direct unlink")
-	require.NotEqual(t, eventsBefore, projectEvents(root, projects[0].ID))
-	require.NotEqual(t, metaBefore, checkpointMeta(root, projects[0].UID))
+	require.NotEqual(t, before.events, projectEvents(root, projects[0].ID))
+	require.NotEqual(t, before.meta, checkpointMeta(root, projects[0].UID))
 
-	retainedState := relayState(root)
-	retainedEvents := projectEvents(root, projects[0].ID)
-	retainedMeta := checkpointMeta(root, projects[0].UID)
+	retained := observe(root, projects[0])
 	blocked, err = rootResets.CreateRelayReset(rejectPeer, binding, signer)
 	require.ErrorIs(t, err, denied)
 	require.Equal(t, db.RelayResetCheckpoint{}, blocked)
-	require.Equal(t, retainedState, relayState(root))
-	require.Equal(t, retainedEvents, projectEvents(root, projects[0].ID))
-	require.Equal(t, retainedMeta, checkpointMeta(root, projects[0].UID))
+	require.Equal(t, retained, observe(root, projects[0]))
 	_, err = rootResets.CreateRelayReset(ctx, binding, signer)
 	require.ErrorIs(t, err, db.ErrUnsupportedEventFeatures)
 	retry, err := rootResets.CreateRelayReset(features, binding, signer)
@@ -186,54 +145,25 @@ func RunRelayCrossLinkResetHistory(t *testing.T, root db.Storage, backend Backen
 	require.Equal(t, []string{issues[1].UID}, linkTargetUIDs(t, hub, hubIssue.ID))
 	hubProject, err := hub.ProjectByUID(ctx, projects[0].UID)
 	require.NoError(t, err)
-	downstream := enroll(hub, leaf, hubProject, "reset-leaf", false)
-	drain := func(binding string) {
-		for _, stream := range []string{db.RelayStreamEvent, db.RelayStreamReceipt, db.RelayStreamArtifact} {
-			for {
-				items, err := hub.PendingRelayDeliveries(features, binding, stream, 100)
-				require.NoError(t, err)
-				if len(items) == 0 {
-					break
-				}
-				last := items[len(items)-1]
-				require.NoError(t, hub.AckRelayDeliveries(ctx, binding, 1, stream, last.Sequence, last.Digest))
-			}
-		}
-	}
-	drain(downstream)
-	before = relayState(hub)
-	eventsBefore = projectEvents(hub, hubProject.ID)
-	metaBefore = checkpointMeta(hub, hubProject.UID)
-	grants, err = hub.ListProjectFederationEnrollments(ctx, hubProject.ID)
-	require.NoError(t, err)
+	downstream, downstreamEpoch := setupRelayHop(t, hub, leaf, hubProject, "reset-leaf", false)
+	streams := []string{db.RelayStreamEvent, db.RelayStreamReceipt, db.RelayStreamArtifact}
+	syncRelayHop(t, features, hub, nil, downstream, downstreamEpoch, streams...)
+	beforeHub := observe(hub, hubProject)
 	_, err = hubResets.CreateRelayReset(ctx, downstream, db.RootAttributionSigner{})
 	require.ErrorIs(t, err, db.ErrUnsupportedEventFeatures)
-	require.Equal(t, before, relayState(hub))
-	require.Equal(t, eventsBefore, projectEvents(hub, hubProject.ID))
-	require.Equal(t, metaBefore, checkpointMeta(hub, hubProject.UID))
-	afterGrants, err = hub.ListProjectFederationEnrollments(ctx, hubProject.ID)
-	require.NoError(t, err)
-	require.Equal(t, grants, afterGrants)
-	before = relayState(hub)
-	eventsBefore = projectEvents(hub, hubProject.ID)
-	metaBefore = checkpointMeta(hub, hubProject.UID)
+	require.Equal(t, beforeHub, observe(hub, hubProject))
 	_, err = hubResets.CreateRelayReset(rejectPeer, downstream, db.RootAttributionSigner{})
 	require.ErrorIs(t, err, denied)
-	require.Equal(t, before, relayState(hub))
-	require.Equal(t, eventsBefore, projectEvents(hub, hubProject.ID))
-	require.Equal(t, metaBefore, checkpointMeta(hub, hubProject.UID))
-	afterGrants, err = hub.ListProjectFederationEnrollments(ctx, hubProject.ID)
-	require.NoError(t, err)
-	require.Equal(t, grants, afterGrants)
+	require.Equal(t, beforeHub, observe(hub, hubProject))
 	forwarded, err := hubResets.CreateRelayReset(features, downstream, db.RootAttributionSigner{})
 	require.NoError(t, err)
-	require.NotEqual(t, metaBefore, checkpointMeta(hub, hubProject.UID))
+	require.NotEqual(t, beforeHub.meta, checkpointMeta(hub, hubProject.UID))
 	require.Equal(t, checkpoint.Manifest, forwarded.Manifest)
 	require.Equal(t, checkpoint.Snapshot, forwarded.Snapshot)
 	peerProject, err := hub.ProjectByUID(ctx, projects[1].UID)
 	require.NoError(t, err)
-	peerDownstream := enroll(hub, leaf, peerProject, "reset-peer-leaf", false)
-	drain(peerDownstream)
+	peerDownstream, peerDownstreamEpoch := setupRelayHop(t, hub, leaf, peerProject, "reset-peer-leaf", false)
+	syncRelayHop(t, features, hub, nil, peerDownstream, peerDownstreamEpoch, streams...)
 	peerForwarded, err := hubResets.CreateRelayReset(features, peerDownstream, db.RootAttributionSigner{})
 	require.NoError(t, err)
 	leafResets := leaf.(db.RelayResetStore)
@@ -248,14 +178,14 @@ func RunRelayCrossLinkResetHistory(t *testing.T, root db.Storage, backend Backen
 	t.Cleanup(func() { require.NoError(t, partial.Close()) })
 	partialLeaf := backend.Open(t)
 	t.Cleanup(func() { require.NoError(t, partialLeaf.Close()) })
-	partialBinding := enroll(root, partial, projects[0], "partial-reset-hub", true)
+	partialBinding, _ := setupRelayHop(t, root, partial, projects[0], "partial-reset-hub", true)
 	partialCheckpoint, err := rootResets.CreateRelayReset(features, partialBinding, signer)
 	require.NoError(t, err)
 	partialResets := partial.(db.RelayResetStore)
 	require.NoError(t, partialResets.InstallRelayReset(ctx, partialBinding, partialCheckpoint.Manifest, partialCheckpoint.Snapshot, partialCheckpoint.Translation))
 	partialProject, err := partial.ProjectByUID(ctx, projects[0].UID)
 	require.NoError(t, err)
-	partialDownstream := enroll(partial, partialLeaf, partialProject, "partial-reset-leaf", false)
+	partialDownstream, _ := setupRelayHop(t, partial, partialLeaf, partialProject, "partial-reset-leaf", false)
 	partialState := relayState(partial)
 	partialMeta := checkpointMeta(partial, partialProject.UID)
 	missingReset, err := partialResets.CreateRelayReset(features, partialDownstream, db.RootAttributionSigner{})
@@ -263,7 +193,7 @@ func RunRelayCrossLinkResetHistory(t *testing.T, root db.Storage, backend Backen
 	require.Equal(t, db.RelayResetCheckpoint{}, missingReset)
 	require.Equal(t, partialState, relayState(partial))
 	require.Equal(t, partialMeta, checkpointMeta(partial, partialProject.UID))
-	partialPeer := enroll(root, partial, projects[1], "partial-reset-peer", true)
+	partialPeer, _ := setupRelayHop(t, root, partial, projects[1], "partial-reset-peer", true)
 	partialPeerCheckpoint, err := rootResets.CreateRelayReset(features, partialPeer, signer)
 	require.NoError(t, err)
 	require.NoError(t, partialResets.InstallRelayReset(ctx, partialPeer, partialPeerCheckpoint.Manifest, partialPeerCheckpoint.Snapshot, partialPeerCheckpoint.Translation))
