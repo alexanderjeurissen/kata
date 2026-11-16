@@ -68,6 +68,7 @@ func TestRelayCrossLinkParentFold(t *testing.T) {
 	projection = db.FoldRelayLinkEvents(events, authority.AllowParentRemoval)
 	require.False(t, projection.Links[foreignParent].Present)
 	require.True(t, projection.Links[localParent].Present)
+	authority.Groups["a"]["b"] = true
 	authority.Relayed["a"] = false
 	projection = db.FoldRelayLinkEvents(events, authority.AllowParentRemoval)
 	require.False(t, projection.Links[foreignParent].Present)

@@ -53,7 +53,7 @@ func TestRelayEventPeerProjects(t *testing.T) {
 		{"diff notification", "issue.metadata_updated", `{"diff":{"` + notification.MetadataKey("recipient") + `":{"from":{},"to":{"re":"` + commentUID + `"}}}}`, nil, nil, map[string]bool{"peer": true}},
 		{"link added", "issue.linked", `{"from_uid":"` + ownIssueUID + `","to_uid":"` + otherIssueUID + `"}`, nil, &ownIssue, map[string]bool{"own": true, "other": true}},
 		{"link removed", "issue.unlinked", `{"from_uid":"` + ownIssueUID + `","to_uid":"` + otherIssueUID + `"}`, nil, &ownIssue, map[string]bool{"own": true, "other": true}},
-		{"subject moved to peer", "issue.updated", `{}`, nil, &related, map[string]bool{"peer": true}},
+		{"subject belongs to peer", "issue.updated", `{}`, nil, &related, map[string]bool{"peer": true}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

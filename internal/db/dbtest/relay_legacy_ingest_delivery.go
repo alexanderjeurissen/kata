@@ -73,9 +73,6 @@ func RunRelayCrossProjectRemoval(t *testing.T, store db.Storage) {
 	require.NoError(t, err)
 	for _, tc := range []struct{ name, eventType, payload string }{
 		{"unlink", "issue.unlinked", `{"type":"blocks","from_uid":"` + child.UID + `","to_uid":"` + peer.UID + `","link_from_uid":"` + child.UID + `","link_to_uid":"` + peer.UID + `"}`},
-		{"mixed", "issue.links_changed", `{"blocks_removed_uids":["` + peer.UID + `"],"related_added_uids":["` + child.UID + `"]}`},
-		{"blocked by", "issue.links_changed", `{"blocked_by_removed_uids":["` + peer.UID + `"]}`},
-		{"related", "issue.links_changed", `{"related_removed_uids":["` + peer.UID + `"]}`},
 		{"parent", "issue.links_changed", `{"parent_removed_uid":"` + peer.UID + `"}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

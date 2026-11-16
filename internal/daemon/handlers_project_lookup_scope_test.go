@@ -34,6 +34,8 @@ func TestIssueScopedProjectLookupHidesMetadata(t *testing.T) {
 	require.Equal(t, http.StatusOK, showResp.StatusCode, string(showBody))
 	lookupResp, lookupBody := envDoRaw(t, env, http.MethodGet, "/api/v1/projects/resolve?name=example-project", nil, headers)
 	require.Equal(t, http.StatusOK, lookupResp.StatusCode, string(lookupBody))
+	require.NotContains(t, string(showBody), "hidden-value")
+	require.NotContains(t, string(lookupBody), "hidden-value")
 	var show, lookup struct {
 		Project map[string]any `json:"project"`
 	}

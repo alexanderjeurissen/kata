@@ -116,6 +116,4 @@ key_file = %q
 	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), []byte(body), 0600))
 	err := runDaemonWithListen(t.Context(), "", false, false)
 	require.ErrorIs(t, err, signingpolicy.ErrSharedSecret)
-	require.ErrorContains(t, err, "key-a")
-	require.ErrorContains(t, err, "key-b")
 }

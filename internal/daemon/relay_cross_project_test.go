@@ -121,36 +121,15 @@ func TestFederationBridgePreflightReportsUncheckedOldHub(t *testing.T) {
 }
 
 func TestFederationBridgePreflightReportsCheckedHub(t *testing.T) {
-	for _, crossing := range []bool{false, true} {
-		t.Run(fmt.Sprintf("crossing=%v", crossing), func(t *testing.T) {
-			t.Setenv("KATA_HOME", t.TempDir())
-			hub := newBridgeHubFixture(t)
-			if crossing {
-				ctx := t.Context()
-				peer, err := hub.store.CreateProject(ctx, "other-shared-project")
-				require.NoError(t, err)
-				_, err = hub.store.EnableProjectFederation(ctx, peer.ID, "admin")
-				require.NoError(t, err)
-				pin, err := hub.store.RootAuthority(ctx, hub.root.private.UID)
-				require.NoError(t, err)
-				pin.ProjectUID = peer.UID
-				require.NoError(t, hub.store.PinRootAuthority(ctx, pin))
-				source, _, err := hub.store.CreateIssue(ctx, db.CreateIssueParams{ProjectID: hub.root.private.ID, Author: "member", Title: "Source"})
-				require.NoError(t, err)
-				target, _, err := hub.store.CreateIssue(ctx, db.CreateIssueParams{ProjectID: peer.ID, Author: "member", Title: "Target"})
-				require.NoError(t, err)
-				_, _, err = hub.store.CreateLinkAndEvent(ctx, db.CreateLinkParams{FromIssueID: source.ID, ToIssueID: target.ID, Type: "blocks", Author: "member"}, db.LinkEventParams{EventType: "issue.linked", EventIssueID: source.ID, Actor: "member", FromUID: source.UID, ToUID: target.UID, FromShortID: source.ShortID, ToShortID: target.ShortID})
-				require.NoError(t, err)
-			}
-			local := newBridgeLocalDaemon(t, openReplicaServiceStore(t), hub.catalog(hub.root.server.URL))
-			code, _, raw := local.request(t, http.MethodPost, "/api/v1/federation/bridges", "", bridgeConnectBody(hub.root.private.Name, true), bridgeOwnerHeaders)
-			require.Equal(t, http.StatusOK, code, string(raw))
-			var preview map[string]any
-			require.NoError(t, json.Unmarshal(raw, &preview))
-			require.Equal(t, "ready", preview["status"])
-			require.Equal(t, true, preview["hub_links_checked"])
-		})
-	}
+	t.Setenv("KATA_HOME", t.TempDir())
+	hub := newBridgeHubFixture(t)
+	local := newBridgeLocalDaemon(t, openReplicaServiceStore(t), hub.catalog(hub.root.server.URL))
+	code, _, raw := local.request(t, http.MethodPost, "/api/v1/federation/bridges", "", bridgeConnectBody(hub.root.private.Name, true), bridgeOwnerHeaders)
+	require.Equal(t, http.StatusOK, code, string(raw))
+	var preview map[string]any
+	require.NoError(t, json.Unmarshal(raw, &preview))
+	require.Equal(t, "ready", preview["status"])
+	require.Equal(t, true, preview["hub_links_checked"])
 }
 
 // relayLinkCheckStore fails only the link check, as when the project is

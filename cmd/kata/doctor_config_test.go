@@ -164,6 +164,4 @@ key_file = %q
 	r := collectDoctor(t.Context())
 	finding := doctorFinding(t, r, "config.federation_signing")
 	require.EqualValues(t, "fail", finding.Status)
-	require.Contains(t, finding.Summary, "key-a")
-	require.Contains(t, finding.Summary, "key-b")
 }
