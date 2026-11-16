@@ -64,7 +64,7 @@ func TestRelayEventPeerProjects(t *testing.T) {
 		})
 	}
 	for _, tc := range []struct{ name, kind, payload string }{
-		{"link added", "issue.linked", `{"from_uid":"missing"}`},
+		{"link source", "issue.linked", `{"from_uid":"missing"}`},
 		{"link target", "issue.unlinked", `{"to_uid":"missing"}`},
 		{"unlink source", "issue.unlinked", `{"link_from_uid":"missing"}`},
 		{"unlink target", "issue.unlinked", `{"link_to_uid":"missing"}`},

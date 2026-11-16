@@ -198,7 +198,8 @@ func RunRelayCrossProjectBoundary(t *testing.T, store db.Storage) {
 		},
 		UnlinkEvent: db.LinkEventParams{
 			EventType: "issue.unlinked", EventIssueID: local.ID,
-			Actor: "member",
+			FromShortID: local.ShortID, FromUID: local.UID,
+			ToShortID: oldParent.ShortID, ToUID: oldParent.UID, Actor: "member",
 		},
 		LinkEvent: db.LinkEventParams{
 			EventType: "issue.linked", EventIssueID: local.ID,
@@ -214,9 +215,17 @@ func RunRelayCrossProjectBoundary(t *testing.T, store db.Storage) {
 	require.NoError(t, err)
 	crossReplacement, err := replacementStore.ReplaceParentAndEvents(ctx, db.ReplaceParentAndEventsParams{
 		ExpectedParentLinkID: replacement.Link.ID, ExpectedParentIssueID: newParent.ID,
-		Link:        db.CreateLinkParams{FromIssueID: local.ID, ToIssueID: sharedParent.ID, Type: "parent", Author: "member"},
-		UnlinkEvent: db.LinkEventParams{EventType: "issue.unlinked", EventIssueID: local.ID, FromUID: local.UID, ToUID: newParent.UID},
-		LinkEvent:   db.LinkEventParams{EventType: "issue.linked", EventIssueID: local.ID, FromUID: local.UID, ToUID: sharedParent.UID},
+		Link: db.CreateLinkParams{FromIssueID: local.ID, ToIssueID: sharedParent.ID, Type: "parent", Author: "member"},
+		UnlinkEvent: db.LinkEventParams{
+			EventType: "issue.unlinked", EventIssueID: local.ID,
+			FromShortID: local.ShortID, FromUID: local.UID,
+			ToShortID: newParent.ShortID, ToUID: newParent.UID, Actor: "member",
+		},
+		LinkEvent: db.LinkEventParams{
+			EventType: "issue.linked", EventIssueID: local.ID,
+			FromShortID: local.ShortID, FromUID: local.UID,
+			ToShortID: sharedParent.ShortID, ToUID: sharedParent.UID, Actor: "member",
+		},
 	})
 	require.NoError(t, err)
 	crossParent, err := store.ParentOf(ctx, local.ID)
@@ -224,9 +233,17 @@ func RunRelayCrossProjectBoundary(t *testing.T, store db.Storage) {
 	require.Equal(t, sharedParent.ID, crossParent.ToIssueID)
 	replacement, err = replacementStore.ReplaceParentAndEvents(ctx, db.ReplaceParentAndEventsParams{
 		ExpectedParentLinkID: crossReplacement.Link.ID, ExpectedParentIssueID: sharedParent.ID,
-		Link:        db.CreateLinkParams{FromIssueID: local.ID, ToIssueID: newParent.ID, Type: "parent", Author: "member"},
-		UnlinkEvent: db.LinkEventParams{EventType: "issue.unlinked", EventIssueID: local.ID, FromUID: local.UID, ToUID: sharedParent.UID},
-		LinkEvent:   db.LinkEventParams{EventType: "issue.linked", EventIssueID: local.ID, FromUID: local.UID, ToUID: newParent.UID},
+		Link: db.CreateLinkParams{FromIssueID: local.ID, ToIssueID: newParent.ID, Type: "parent", Author: "member"},
+		UnlinkEvent: db.LinkEventParams{
+			EventType: "issue.unlinked", EventIssueID: local.ID,
+			FromShortID: local.ShortID, FromUID: local.UID,
+			ToShortID: sharedParent.ShortID, ToUID: sharedParent.UID, Actor: "member",
+		},
+		LinkEvent: db.LinkEventParams{
+			EventType: "issue.linked", EventIssueID: local.ID,
+			FromShortID: local.ShortID, FromUID: local.UID,
+			ToShortID: newParent.ShortID, ToUID: newParent.UID, Actor: "member",
+		},
 	})
 	require.NoError(t, err)
 	currentParentLink := replacement.Link

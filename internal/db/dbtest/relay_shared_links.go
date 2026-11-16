@@ -115,6 +115,26 @@ func RunRelayEventReleasePeerAccess(t *testing.T, store db.Storage) {
 	require.NoError(t, err)
 	require.NotEmpty(t, offered)
 	require.Equal(t, moved.Event.UID, offered[len(offered)-1].SourceUID)
+
+	purgeGrant, err := store.CreateRelayEnrollment(ctx, db.CreateRelayEnrollmentParams{
+		ProjectID: fixture.Projects[0].ID, ParentTokenID: *fixture.Grant.Enrollment.ParentTokenID,
+		SpokeInstanceUID: "00000000000000000000000008", ProtocolVersion: db.RelayProtocolVersion,
+		Token: "purged-link-relay-test-token",
+	})
+	require.NoError(t, err)
+	purgeBinding := purgeGrant.Enrollment.RelayBindingUID
+	_, err = store.PurgeIssue(ctx, fixture.Issues[1].ID, "admin", nil)
+	require.NoError(t, err)
+	_, later, err := store.CreateIssue(ctx, db.CreateIssueParams{
+		ProjectID: fixture.Projects[0].ID, Author: "member", Title: "After purge",
+	})
+	require.NoError(t, err)
+	out, err = store.PendingRelayDeliveries(rejectPeer, purgeBinding, db.RelayStreamEvent, 100)
+	require.ErrorIs(t, err, denied)
+	items, err := store.PendingRelayDeliveries(features, purgeBinding, db.RelayStreamEvent, 100)
+	require.NoError(t, err)
+	require.NotEmpty(t, items)
+	require.Equal(t, later.UID, items[len(items)-1].SourceUID)
 }
 
 // RunRelayArchivedPeerEventRelease checks that an archived endpoint doesn't
@@ -207,28 +227,4 @@ func NewRelaySharedAccessFixture(t *testing.T, store db.Storage) RelaySharedAcce
 	require.NoError(t, err)
 
 	return RelaySharedAccessFixture{Projects: projects, Issues: issues, Grant: grant, Team: team, Signer: db.RootAttributionSigner{AuthorityUID: store.InstanceUID(), PrivateKey: private}}
-}
-
-// RunRelayReleasePurgedLink keeps the original link history deliverable after its peer is purged.
-func RunRelayReleasePurgedLink(t *testing.T, store db.Storage) {
-	ctx := t.Context()
-	fixture := NewRelaySharedAccessFixture(t, store)
-	_, err := store.PurgeIssue(ctx, fixture.Issues[1].ID, "admin", nil)
-	require.NoError(t, err)
-	_, later, err := store.CreateIssue(ctx, db.CreateIssueParams{ProjectID: fixture.Projects[0].ID, Author: "member", Title: "After purge"})
-	require.NoError(t, err)
-	features := db.WithRelayPeerEventFeatures(ctx, db.SupportedEventFeatures)
-	denied := errors.New("purged peer denied")
-	reject := db.WithProjectAccessTransactionCheck(features, func(_ context.Context, _ db.Transaction, uid string) error {
-		if uid == fixture.Projects[1].UID {
-			return denied
-		}
-		return nil
-	})
-	_, err = store.PendingRelayDeliveries(reject, fixture.Grant.Enrollment.RelayBindingUID, db.RelayStreamEvent, 100)
-	require.ErrorIs(t, err, denied)
-	items, err := store.PendingRelayDeliveries(features, fixture.Grant.Enrollment.RelayBindingUID, db.RelayStreamEvent, 100)
-	require.NoError(t, err)
-	require.NotEmpty(t, items)
-	require.Equal(t, later.UID, items[len(items)-1].SourceUID)
 }
