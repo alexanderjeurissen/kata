@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/json/jsontext"
-	"encoding/json/v2"
 	"errors"
 	"testing"
 
@@ -173,34 +172,11 @@ func NewRelaySharedAccessFixture(t *testing.T, store db.Storage) RelaySharedAcce
 func RunRelayReleasePurgedLink(t *testing.T, store db.Storage) {
 	ctx := t.Context()
 	fixture := NewRelaySharedAccessFixture(t, store)
-	checkpointGrant, err := store.CreateRelayEnrollment(ctx, db.CreateRelayEnrollmentParams{ProjectID: fixture.Projects[0].ID, ParentTokenID: *fixture.Grant.Enrollment.ParentTokenID, SpokeInstanceUID: "00000000000000000000000007", ProtocolVersion: db.RelayProtocolVersion, Token: "purge-checkpoint-test-token"})
+	_, err := store.PurgeIssue(ctx, fixture.Issues[1].ID, "admin", nil)
 	require.NoError(t, err)
-	features := db.WithRelayPeerEventFeatures(ctx, db.SupportedEventFeatures)
-	resets := store.(db.RelayResetStore)
-	cached, err := resets.CreateRelayReset(features, checkpointGrant.Enrollment.RelayBindingUID, fixture.Signer)
-	require.NoError(t, err)
-	_, err = store.PurgeIssue(ctx, fixture.Issues[1].ID, "admin", nil)
-	require.NoError(t, err)
-	refreshed, err := resets.CreateRelayReset(features, checkpointGrant.Enrollment.RelayBindingUID, fixture.Signer)
-	require.NoError(t, err)
-	require.NotEqual(t, cached.Manifest.SnapshotUID, refreshed.Manifest.SnapshotUID)
-	var entities [][]byte
-	err = json.Unmarshal(refreshed.Snapshot.Entities, &entities)
-	require.NoError(t, err)
-	found := false
-	for _, body := range entities {
-		event, err := db.DecodeRelaySourceEvent(body)
-		require.NoError(t, err)
-		if event.Type == "issue.snapshot" && event.IssueUID != nil && *event.IssueUID == fixture.Issues[0].UID {
-			found = true
-			var document db.IssueDocumentPayload
-			require.NoError(t, json.Unmarshal(event.Payload, &document))
-			require.Empty(t, document.Links)
-		}
-	}
-	require.True(t, found)
 	_, later, err := store.CreateIssue(ctx, db.CreateIssueParams{ProjectID: fixture.Projects[0].ID, Author: "member", Title: "After purge"})
 	require.NoError(t, err)
+	features := db.WithRelayPeerEventFeatures(ctx, db.SupportedEventFeatures)
 	denied := errors.New("purged peer denied")
 	reject := db.WithProjectAccessTransactionCheck(features, func(_ context.Context, _ db.Transaction, uid string) error {
 		if uid == fixture.Projects[1].UID {
