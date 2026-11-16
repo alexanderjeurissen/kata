@@ -7,6 +7,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"maps"
 	"strings"
 	"time"
 
@@ -546,6 +547,24 @@ func (s *Store) materializeFederatedProjectTx(
 			return err
 		}
 		return rebindIssueEmbeddingArtifactsTx(ctx, tx, issueUID, targetProjectUID)
+	}, func(projectID int64, issue db.FoldIssue, projection db.FoldProjection) error {
+		view := projection
+		view.Issues = map[string]db.FoldIssue{issue.UID: issue}
+		view.Comments = maps.Clone(projection.Comments)
+		view.Labels = maps.Clone(projection.Labels)
+		db.RestrictFoldProject(&view, issue.ProjectUID)
+		rows, err := federatedIssueRowsByUID(ctx, tx, projectID, issue.UID)
+		if err != nil {
+			return err
+		}
+		ids, err := s.reconcileFederatedIssues(ctx, tx, &federatedMaterialization{projectID: projectID, existingIssues: rows}, view)
+		if err != nil {
+			return err
+		}
+		if err := reconcileFederatedComments(ctx, tx, projectID, ids, view, issue.UID); err != nil {
+			return err
+		}
+		return reconcileFederatedLabels(ctx, tx, projectID, ids, view, issue.UID)
 	}, acceptedEventUIDs, func(project db.Project, reference *db.FederationMovedReference) (int64, error) {
 		payload := "{}"
 		var issueUID *string
@@ -761,9 +780,15 @@ func federatedIssueRowsByUID(
 	ctx context.Context,
 	tx *sql.Tx,
 	projectID int64,
+	scope ...string,
 ) (map[string]federatedIssueRow, error) {
-	rows, err := tx.QueryContext(ctx,
-		`SELECT uid,id,short_id,title,body,deleted_at IS NOT NULL FROM issues WHERE project_id=$1`, projectID)
+	query := `SELECT uid,id,short_id,title,body,deleted_at IS NOT NULL FROM issues WHERE project_id=$1`
+	args := []any{projectID}
+	if len(scope) > 0 {
+		query += ` AND uid=$2`
+		args = append(args, scope[0])
+	}
+	rows, err := tx.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, mapSQLError(err, nil)
 	}
@@ -786,6 +811,7 @@ func reconcileFederatedComments(
 	projectID int64,
 	issueIDs map[string]int64,
 	projection db.FoldProjection,
+	scope ...string,
 ) error {
 	existing, err := federatedCommentRowsByUID(ctx, tx, projectID)
 	if err != nil {
@@ -797,6 +823,11 @@ func reconcileFederatedComments(
 		desired[comment.UID] = struct{}{}
 	}
 	for commentUID, row := range existing {
+		if len(scope) > 0 {
+			// The lookup covers the project to find matching UIDs, but a moved
+			// issue must not delete comments outside its folded history.
+			continue
+		}
 		if _, ok := desired[commentUID]; ok {
 			continue
 		}
@@ -919,8 +950,9 @@ func reconcileFederatedLabels(
 	projectID int64,
 	issueIDs map[string]int64,
 	projection db.FoldProjection,
+	scope ...string,
 ) error {
-	existing, err := federatedLabelKeys(ctx, tx, projectID)
+	existing, err := federatedLabelKeys(ctx, tx, projectID, scope...)
 	if err != nil {
 		return err
 	}
@@ -933,6 +965,11 @@ func reconcileFederatedLabels(
 		desired[federatedLabelKey{issueID: issueID, label: key.Label}] = struct{}{}
 	}
 	for key := range existing {
+		if len(scope) > 0 {
+			if _, ok := projection.Labels[db.FoldLabelKey{IssueUID: scope[0], Label: key.label}]; !ok {
+				continue
+			}
+		}
 		if _, ok := desired[key]; ok {
 			continue
 		}
@@ -958,9 +995,16 @@ func federatedLabelKeys(
 	ctx context.Context,
 	tx *sql.Tx,
 	projectID int64,
+	scope ...string,
 ) (map[federatedLabelKey]struct{}, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT il.issue_id,il.label FROM issue_labels il
-JOIN issues i ON i.id=il.issue_id WHERE i.project_id=$1`, projectID)
+	query := `SELECT il.issue_id,il.label FROM issue_labels il
+JOIN issues i ON i.id=il.issue_id WHERE i.project_id=$1`
+	args := []any{projectID}
+	if len(scope) > 0 {
+		query += ` AND i.uid=$2`
+		args = append(args, scope[0])
+	}
+	rows, err := tx.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, mapSQLError(err, nil)
 	}
