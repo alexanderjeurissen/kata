@@ -120,10 +120,6 @@ var storageScenarios = []scenario{
 		RunRelayCrossLinkResetHistory(t, store, backend)
 		return nil
 	}},
-	{name: "relay purged forward", runWithBackend: func(t *testing.T, _ db.Storage, backend Backend) error {
-		RunRelayPurgedForward(t, backend)
-		return nil
-	}},
 	{name: "relay checkpoint capacity", methods: []string{"CreateAPIToken", "CreateIssue", "CreateProject", "CreateRelayEnrollment", "ListFederationEnrollments", "PinRootAuthority", "UpsertFederationBinding"}, runWithBackend: func(t *testing.T, _ db.Storage, backend Backend) error {
 		RunRelayCheckpointCapacity(t, backend)
 		return nil
@@ -159,10 +155,6 @@ var storageScenarios = []scenario{
 	{name: "legacy relay admission", methods: []string{"IngestFederationEvents", "CreateRelayEnrollment", "RevokeFederationEnrollment"}, run: func(t *testing.T, store db.Storage) error {
 		RunLegacyRelayAdmission(t, store)
 		RunLegacyRelayParentUIDCollision(t, store)
-		return nil
-	}},
-	{name: "legacy relay held link release", run: func(t *testing.T, store db.Storage) error {
-		RunLegacyRelayHeldLinkRelease(t, store)
 		return nil
 	}},
 	{name: "relay cross project removal", run: func(t *testing.T, store db.Storage) error { RunRelayCrossProjectRemoval(t, store); return nil }},

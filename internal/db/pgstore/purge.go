@@ -50,7 +50,7 @@ func (s *Store) PurgeIssue(ctx context.Context, issueID int64, actor string, rea
 			return db.ErrFederationResetBlockedByPendingPush
 		}
 
-		eventsWhere := `(e.issue_id = $1 OR e.issue_uid = $2 OR ((e.related_issue_id = $1 OR e.related_issue_uid = $2) AND e.type NOT IN ('issue.linked', 'issue.links_changed', 'issue.commented')))`
+		eventsWhere := `(e.issue_id = $1 OR e.issue_uid = $2 OR ((e.related_issue_id = $1 OR e.related_issue_uid = $2) AND e.type NOT IN ('issue.links_changed', 'issue.commented')))`
 		var minEventID, maxEventID sql.NullInt64
 		if err := tx.QueryRowContext(ctx, `SELECT MIN(e.id), MAX(e.id) FROM events e WHERE `+eventsWhere, issue.ID, issue.UID).Scan(&minEventID, &maxEventID); err != nil {
 			return mapSQLError(err, nil)
@@ -81,7 +81,7 @@ func (s *Store) PurgeIssue(ctx context.Context, issueID int64, actor string, rea
 			return mapSQLError(err, nil)
 		}
 		_, err = tx.ExecContext(ctx, `UPDATE events SET related_issue_id = NULL
-		  WHERE related_issue_id = $1 AND type IN ('issue.linked', 'issue.links_changed')`, issue.ID)
+		  WHERE related_issue_id = $1 AND type = 'issue.links_changed'`, issue.ID)
 		if err != nil {
 			return mapSQLError(err, nil)
 		}

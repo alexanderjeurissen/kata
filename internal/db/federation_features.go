@@ -401,9 +401,6 @@ func RelayEventFeaturePrefix(ctx context.Context, backend interface {
 		events = append(events, event)
 	}
 	count, err := backend.AuthorizeRelayReleasePrefix(ctx, projectUID, events)
-	if errors.Is(err, ErrRelayLinkUnresolved) {
-		return events[:count], nil
-	}
 	if errors.Is(err, ErrUnsupportedEventFeatures) && count > 0 {
 		return events[:count], nil
 	}

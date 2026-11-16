@@ -93,27 +93,23 @@ func EventRequiresProjectScopeReset(
 		return false, nil
 	}
 	projectIsPrivate := func(uid string) (bool, error) { _, visible := allowed[uid]; return !visible, nil }
-	return walkEventProjectReferences(event, issueIsPrivate, issueIsPrivate, refIsPrivate, commentIsPrivate, projectIsPrivate)
+	return walkEventProjectReferences(event, issueIsPrivate, refIsPrivate, commentIsPrivate, projectIsPrivate)
 }
 
 // walkEventProjectReferences visits structured references without selecting a visibility policy.
-func walkEventProjectReferences(event Event, issueIsPrivate, linkIsPrivate func(string) (bool, error), refIsPrivate func(string) (bool, error), commentIsPrivate func(string, string) (bool, error), projectIsPrivate func(string) (bool, error)) (bool, error) {
+func walkEventProjectReferences(event Event, issueIsPrivate func(string) (bool, error), refIsPrivate func(string) (bool, error), commentIsPrivate func(string, string) (bool, error), projectIsPrivate func(string) (bool, error)) (bool, error) {
 	for _, relatedUID := range []*string{event.RelatedIssueUID} {
 		if relatedUID == nil {
 			continue
 		}
-		check := issueIsPrivate
-		if event.Type == "issue.linked" || event.Type == "issue.unlinked" {
-			check = linkIsPrivate
-		}
-		private, err := check(*relatedUID)
+		private, err := issueIsPrivate(*relatedUID)
 		if err != nil || private {
 			return private, err
 		}
 	}
 	checkUIDs := func(uids []string) (bool, error) {
 		for _, uid := range uids {
-			private, err := linkIsPrivate(uid)
+			private, err := issueIsPrivate(uid)
 			if err != nil || private {
 				return private, err
 			}

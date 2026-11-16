@@ -31,22 +31,6 @@ func RelayEventPeerProjects(event RemoteEvent, lookup *EventIssueLookup, visit f
 		issue, err := lookup.IssueByUID(uid)
 		return add(issue, err)
 	}
-	linkUID := func(uid string) (bool, error) {
-		if uid == "" {
-			return false, nil
-		}
-		projectUID, err := lookup.LinkProjectUID(uid)
-		if errors.Is(err, ErrNotFound) {
-			return false, ErrRelayLinkUnresolved
-		}
-		if err != nil {
-			return false, err
-		}
-		if projectUID == "" {
-			return false, ErrRelayLinkUnresolved
-		}
-		return false, visit(projectUID)
-	}
 	issueRef := func(ref string) (bool, error) {
 		if ref == "" {
 			return false, nil
@@ -85,7 +69,7 @@ func RelayEventPeerProjects(event RemoteEvent, lookup *EventIssueLookup, visit f
 			}
 		}
 	}
-	_, err := walkEventProjectReferences(Event{ProjectUID: event.ProjectUID, RelatedIssueUID: event.RelatedIssueUID, Type: event.Type, Payload: string(event.Payload)}, issueUID, linkUID, issueRef, comment, project)
+	_, err := walkEventProjectReferences(Event{ProjectUID: event.ProjectUID, RelatedIssueUID: event.RelatedIssueUID, Type: event.Type, Payload: string(event.Payload)}, issueUID, issueRef, comment, project)
 	if err != nil {
 		return err
 	}

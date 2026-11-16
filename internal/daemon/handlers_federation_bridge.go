@@ -160,7 +160,7 @@ func relayTransportError(err error) error {
 	if errors.Is(err, db.ErrNotFound) {
 		return federationCredentialDenied()
 	}
-	if errors.Is(err, ErrHostAccessDenied) || errors.Is(err, db.ErrRelayLinkUnresolved) {
+	if errors.Is(err, ErrHostAccessDenied) {
 		return projectAccessDenied()
 	}
 	if errors.Is(err, db.ErrRemoteEventConflict) {

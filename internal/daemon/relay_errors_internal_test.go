@@ -21,7 +21,6 @@ func TestRelayTransportErrorClassification(t *testing.T) {
 		{db.ErrTransactionFinalizationFailed, http.StatusServiceUnavailable},
 		{db.ErrFederationIngestValidation, http.StatusBadRequest},
 		{db.ErrRemoteEventConflict, http.StatusConflict},
-		{db.ErrRelayLinkUnresolved, http.StatusNotFound},
 	} {
 		err := relayTransportError(test.err)
 		var apiErr *api.APIError

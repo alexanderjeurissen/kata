@@ -6,7 +6,6 @@ import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
-	"fmt"
 	"slices"
 
 	"go.kenn.io/kata/internal/db"
@@ -280,18 +279,11 @@ func relayEventCrossesProjectTx(ctx context.Context, tx *sql.Tx, projectID int64
 }
 
 func relayLinkEndpointProjectTx(ctx context.Context, tx *sql.Tx, issueUID string, rootLink bool) (int64, bool, bool, error) {
-	var purged bool
 	var archived bool
 	var projectID int64
 	err := tx.QueryRowContext(ctx, `SELECT i.project_id, p.deleted_at IS NOT NULL FROM issues i JOIN projects p ON p.id=i.project_id WHERE i.uid=?`, issueUID).Scan(&projectID, &archived)
 	if errors.Is(err, sql.ErrNoRows) {
-		if !rootLink {
-			return 0, false, true, nil
-		}
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM purge_log WHERE issue_uid=?)`, issueUID).Scan(&purged); err != nil {
-			return 0, false, false, fmt.Errorf("check purged relay link endpoint: %w", err)
-		}
-		return 0, false, purged, nil
+		return 0, false, !rootLink, nil
 	}
 	if err != nil {
 		return 0, false, false, err

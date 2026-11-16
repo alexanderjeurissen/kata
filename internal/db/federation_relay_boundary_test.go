@@ -63,17 +63,4 @@ func TestRelayEventPeerProjects(t *testing.T) {
 			require.Equal(t, tc.want, projects)
 		})
 	}
-	for _, tc := range []struct{ name, kind, payload string }{
-		{"link source", "issue.linked", `{"from_uid":"missing"}`},
-		{"link target", "issue.unlinked", `{"to_uid":"missing"}`},
-		{"unlink source", "issue.unlinked", `{"link_from_uid":"missing"}`},
-		{"unlink target", "issue.unlinked", `{"link_to_uid":"missing"}`},
-		{"composite target", "issue.links_changed", `{"related_added_uids":["missing"]}`},
-		{"snapshot target", "issue.snapshot", `{"links":[{"to_issue_uid":"missing"}]}`},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			err := RelayEventPeerProjects(RemoteEvent{ProjectUID: "own", Type: tc.kind, Payload: jsontext.Value(tc.payload)}, lookup, func(string) error { return nil })
-			require.ErrorIs(t, err, ErrRelayLinkUnresolved)
-		})
-	}
 }
