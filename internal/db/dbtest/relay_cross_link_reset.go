@@ -273,7 +273,7 @@ func RunRelayCrossLinkResetHistory(t *testing.T, root db.Storage, backend Backen
 	require.Equal(t, partialCheckpoint.Snapshot, partialRetry.Snapshot)
 	archivedReplica := backend.Open(t)
 	t.Cleanup(func() { require.NoError(t, archivedReplica.Close()) })
-	archivedBinding := enroll(root, archivedReplica, projects[0], "archive-source", false)
+	archivedBinding := enroll(root, archivedReplica, projects[0], "archive-source", true)
 	archivedPeerBinding := enroll(root, archivedReplica, projects[1], "archive-peer", false)
 	for _, current := range []string{archivedPeerBinding, archivedBinding} {
 		items, err := root.PendingRelayDeliveries(features, current, db.RelayStreamEvent, 100)
@@ -283,13 +283,27 @@ func RunRelayCrossLinkResetHistory(t *testing.T, root db.Storage, backend Backen
 		last := items[len(items)-1]
 		require.NoError(t, root.AckRelayDeliveries(ctx, current, 1, db.RelayStreamEvent, last.Sequence, last.Digest))
 	}
+	archivedLeaf := backend.Open(t)
+	t.Cleanup(func() { require.NoError(t, archivedLeaf.Close()) })
+	archivedSource, err := archivedReplica.ProjectByUID(ctx, projects[0].UID)
+	require.NoError(t, err)
+	archivedDownstream := enroll(archivedReplica, archivedLeaf, archivedSource, "archive-leaf", false)
+	for {
+		items, err := archivedReplica.PendingRelayDeliveries(features, archivedDownstream, db.RelayStreamEvent, 100)
+		require.NoError(t, err)
+		if len(items) == 0 {
+			break
+		}
+		last := items[len(items)-1]
+		require.NoError(t, archivedReplica.AckRelayDeliveries(ctx, archivedDownstream, 1, db.RelayStreamEvent, last.Sequence, last.Digest))
+	}
 	archivedPeer, err := archivedReplica.ProjectByUID(ctx, projects[1].UID)
 	require.NoError(t, err)
 	_, _, err = archivedReplica.RemoveProject(ctx, db.RemoveProjectParams{ProjectID: archivedPeer.ID, Actor: "member", Force: true})
 	require.NoError(t, err)
 	newIssue, _, err := root.CreateIssue(db.WithRootAttribution(ctx, signer, "root-member"), db.CreateIssueParams{ProjectID: projects[0].ID, Author: "root-member", Title: "After archive"})
 	require.NoError(t, err)
-	_, _, err = root.CreateLinkAndEvent(db.WithRootAttribution(ctx, signer, "root-member"), db.CreateLinkParams{FromIssueID: newIssue.ID, ToIssueID: issues[1].ID, Type: "blocks", Author: "root-member"}, db.LinkEventParams{EventType: "issue.linked", EventIssueID: newIssue.ID, Actor: "root-member", FromUID: newIssue.UID, ToUID: issues[1].UID, FromShortID: newIssue.ShortID, ToShortID: issues[1].ShortID})
+	_, linkEvent, err := root.CreateLinkAndEvent(db.WithRootAttribution(ctx, signer, "root-member"), db.CreateLinkParams{FromIssueID: newIssue.ID, ToIssueID: issues[1].ID, Type: "blocks", Author: "root-member"}, db.LinkEventParams{EventType: "issue.linked", EventIssueID: newIssue.ID, Actor: "root-member", FromUID: newIssue.UID, ToUID: issues[1].UID, FromShortID: newIssue.ShortID, ToShortID: issues[1].ShortID})
 	require.NoError(t, err)
 	items, err := root.PendingRelayDeliveries(features, archivedBinding, db.RelayStreamEvent, 100)
 	require.NoError(t, err)
@@ -297,4 +311,16 @@ func RunRelayCrossLinkResetHistory(t *testing.T, root db.Storage, backend Backen
 	require.NoError(t, err)
 	_, err = archivedReplica.IssueByUID(ctx, newIssue.UID, db.IncludeDeletedYes)
 	require.NoError(t, err)
+	archivedDenied := errors.New("archived peer denied")
+	checkedFeatures := db.WithProjectAccessTransactionCheck(features, func(ctx context.Context, tx db.Transaction, uid string) error {
+		project, err := archivedReplica.ProjectByUIDTx(ctx, tx, uid)
+		if errors.Is(err, db.ErrNotFound) || (err == nil && project.DeletedAt != nil) {
+			return archivedDenied
+		}
+		return err
+	})
+	items, err = archivedReplica.PendingRelayDeliveries(checkedFeatures, archivedDownstream, db.RelayStreamEvent, 100)
+	require.NoError(t, err)
+	require.NotEmpty(t, items)
+	require.Equal(t, linkEvent.UID, items[len(items)-1].SourceUID)
 }
