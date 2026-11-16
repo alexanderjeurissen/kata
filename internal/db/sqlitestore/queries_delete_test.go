@@ -227,10 +227,8 @@ func TestPurgeIssue_RemovesAllDependentsAndAudits(t *testing.T) {
 	assert.Equal(t, int64(1), pl.CommentCount)
 	assert.Equal(t, int64(1), pl.LinkCount)
 	assert.Equal(t, int64(1), pl.LabelCount)
-	// Events: issue.created + issue.commented + issue.labeled = 3 attached to target,
-	// plus 1 issue.linked attributed to target via related_issue_id (keeper's event).
-	// Total: 4.
-	assert.Equal(t, int64(4), pl.EventCount)
+	// The target's creation, comment, and label events are deleted.
+	assert.Equal(t, int64(3), pl.EventCount)
 	require.NotNil(t, pl.EventsDeletedMinID)
 	require.NotNil(t, pl.EventsDeletedMaxID)
 	require.NotNil(t, pl.PurgeResetAfterEventID, "events were deleted, reset cursor must be set")
@@ -257,12 +255,12 @@ func TestPurgeIssue_RemovesAllDependentsAndAudits(t *testing.T) {
 	assertRowCount(ctx, t, d, 0, "comment FTS tokens removed",
 		`SELECT count(*) FROM comments_fts WHERE comments_fts MATCH 'comment'`)
 
-	// keeper's events.created is the only event attributed to keeper that
-	// survives — keeper's issue.linked was deleted because related_issue_id
-	// pointed to target.
-	assertRowCount(ctx, t, d, 1,
-		"keeper's issue.created survives; its issue.linked was cascade-deleted via related_issue_id",
+	// The keeper's creation and link events survive the target's purge.
+	assertRowCount(ctx, t, d, 2,
+		"keeper's issue.created and issue.linked survive",
 		`SELECT count(*) FROM events WHERE issue_id = ?`, keeper.ID)
+	assertRowCount(ctx, t, d, 1, "keeper's link history survives",
+		`SELECT count(*) FROM events WHERE issue_id = ? AND type = 'issue.linked'`, keeper.ID)
 }
 
 // TestEditIssueAtomic_AddBlocksHandlesConcurrentInsertGracefully covers
