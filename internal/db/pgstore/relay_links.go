@@ -35,31 +35,52 @@ func validateRelayLinkEndpointsInProject(
 			continue
 		}
 		var endpointProjectID int64
-		err := tx.QueryRowContext(ctx, `SELECT project_id FROM issues WHERE uid=$1`, issueUID).Scan(&endpointProjectID)
+		var archived bool
+		err := tx.QueryRowContext(ctx, `SELECT i.project_id, p.deleted_at IS NOT NULL FROM issues i JOIN projects p ON p.id=i.project_id WHERE i.uid=$1`, issueUID).Scan(&endpointProjectID, &archived)
 		if err == sql.ErrNoRows {
 			continue // Same-project peers may arrive later in the relay stream.
 		}
 		if err != nil {
 			return mapSQLError(err, nil)
 		}
-		if endpointProjectID != projectID {
-			pin, err := rootPinTx(ctx, tx, event.ProjectUID, "")
-			if err != nil && !errors.Is(err, db.ErrNotFound) {
-				return err
-			}
-			if err == nil && event.OriginInstanceUID == pin.AuthorityUID {
-				shared, err := relaySharedProjectsTx(ctx, tx, projectID, endpointProjectID, false)
-				if err != nil {
-					return err
-				}
-				if shared {
-					continue
-				}
-			}
+		if endpointProjectID == projectID {
+			continue
+		}
+		allowed, err := relayCrossProjectEndpointAllowed(ctx, tx, projectID, endpointProjectID, archived, event)
+		if err != nil {
+			return err
+		}
+		if !allowed {
 			return fmt.Errorf("%w: relay link endpoint %s belongs to another project", db.ErrFederationIngestValidation, issueUID)
 		}
 	}
 	return nil
+}
+
+// relayCrossProjectEndpointAllowed accepts a link endpoint in another project
+// only for a root-authored event: an archived endpoint project is skipped, and
+// a live one must share the event project's relay audience.
+func relayCrossProjectEndpointAllowed(
+	ctx context.Context,
+	tx *sql.Tx,
+	projectID, endpointProjectID int64,
+	archived bool,
+	event db.RemoteEvent,
+) (bool, error) {
+	pin, err := rootPinTx(ctx, tx, event.ProjectUID, "")
+	if errors.Is(err, db.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if event.OriginInstanceUID != pin.AuthorityUID {
+		return false, nil
+	}
+	if archived {
+		return true, nil
+	}
+	return relaySharedProjectsTx(ctx, tx, projectID, endpointProjectID, false)
 }
 
 // relayOriginClassifier decides from durable per-event provenance whether a
