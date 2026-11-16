@@ -58,7 +58,7 @@ func TestRelayEventPeerProjects(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			projects := map[string]bool{}
-			err := RelayEventPeerProjects(RemoteEvent{ProjectUID: "own", Type: tc.kind, Payload: jsontext.Value(tc.payload), RelatedIssueUID: tc.related, IssueUID: tc.issue}, lookup, func(uid string) error { projects[uid] = true; return nil })
+			err := RelayEventPeerProjects(RemoteEvent{ProjectUID: "own", Type: tc.kind, Payload: jsontext.Value(tc.payload), RelatedIssueUID: tc.related, IssueUID: tc.issue}, lookup, func(uid string, _ bool) error { projects[uid] = true; return nil })
 			require.NoError(t, err)
 			require.Equal(t, tc.want, projects)
 		})

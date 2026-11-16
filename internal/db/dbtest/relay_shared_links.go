@@ -57,18 +57,39 @@ func RunRelayEventReleasePeerAccess(t *testing.T, store db.Storage) {
 	require.Equal(t, offered, retry)
 	last := offered[len(offered)-1]
 	require.NoError(t, store.AckRelayDeliveries(ctx, binding, 1, db.RelayStreamEvent, last.Sequence, last.Digest))
+	peerComment, _, err := store.CreateComment(ctx, db.CreateCommentParams{IssueID: fixture.Issues[1].ID, Author: "member", Body: "Peer comment"})
+	require.NoError(t, err)
+	_, reply, err := store.CreateComment(db.WithRootAttribution(ctx, fixture.Signer, "member"), db.CreateCommentParams{IssueID: fixture.Issues[0].ID, Author: "member", Body: "Cross-project reply", ReplyToUID: peerComment.UID, ReplyKind: "reply"})
+	require.NoError(t, err)
+	rejectOlder := db.WithProjectAccessTransactionCheck(ctx, func(_ context.Context, _ db.Transaction, uid string) error {
+		if uid == fixture.Projects[1].UID {
+			return denied
+		}
+		return nil
+	})
+	_, err = store.PendingRelayDeliveries(rejectOlder, binding, db.RelayStreamEvent, 100)
+	require.ErrorIs(t, err, denied)
 	_, ordinary, err := store.CreateIssue(ctx, db.CreateIssueParams{ProjectID: fixture.Projects[0].ID, Author: "member", Title: "Before crossing"})
 	require.NoError(t, err)
 	_, crossing, err := store.CreateLinkAndEvent(db.WithRootAttribution(ctx, fixture.Signer, "member"), db.CreateLinkParams{FromIssueID: fixture.Issues[0].ID, ToIssueID: fixture.Issues[1].ID, Type: "related", Author: "member"}, db.LinkEventParams{EventType: "issue.linked", EventIssueID: fixture.Issues[0].ID, Actor: "member", FromUID: fixture.Issues[0].UID, ToUID: fixture.Issues[1].UID})
 	require.NoError(t, err)
-	prefix, err := store.PendingRelayDeliveries(ctx, binding, db.RelayStreamEvent, 100)
+	checks = 0
+	olderPeer := db.WithProjectAccessTransactionCheck(ctx, func(_ context.Context, _ db.Transaction, uid string) error {
+		if uid == fixture.Projects[1].UID {
+			checks++
+		}
+		return nil
+	})
+	prefix, err := store.PendingRelayDeliveries(olderPeer, binding, db.RelayStreamEvent, 100)
 	require.NoError(t, err)
-	require.Len(t, prefix, 1)
-	require.Equal(t, ordinary.UID, prefix[0].SourceUID)
+	require.Equal(t, 1, checks)
+	require.Len(t, prefix, 2)
+	require.Equal(t, reply.UID, prefix[0].SourceUID)
+	require.Equal(t, ordinary.UID, prefix[1].SourceUID)
 	replayed, err := store.PendingRelayDeliveries(ctx, binding, db.RelayStreamEvent, 100)
 	require.NoError(t, err)
 	require.Equal(t, prefix, replayed)
-	require.NoError(t, store.AckRelayDeliveries(ctx, binding, 1, db.RelayStreamEvent, prefix[0].Sequence, prefix[0].Digest))
+	require.NoError(t, store.AckRelayDeliveries(ctx, binding, 1, db.RelayStreamEvent, prefix[1].Sequence, prefix[1].Digest))
 	_, err = store.PendingRelayDeliveries(ctx, binding, db.RelayStreamEvent, 100)
 	require.ErrorIs(t, err, db.ErrUnsupportedEventFeatures)
 	next, err := store.PendingRelayDeliveries(features, binding, db.RelayStreamEvent, 100)

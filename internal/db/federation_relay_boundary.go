@@ -11,9 +11,10 @@ import (
 
 // RelayEventPeerProjects resolves the projects named by a source event.
 // The lookup must use an unrestricted project context on the held transaction.
-// An empty UID passed to visit identifies an unresolved link endpoint.
-func RelayEventPeerProjects(event RemoteEvent, lookup *EventIssueLookup, visit func(string) error) error {
-	add := func(issue Issue, err error) (bool, error) {
+// The visit callback receives a project UID and whether the reference is a link.
+// An empty UID identifies an unresolved link endpoint.
+func RelayEventPeerProjects(event RemoteEvent, lookup *EventIssueLookup, visit func(string, bool) error) error {
+	add := func(issue Issue, err error, link bool) (bool, error) {
 		if errors.Is(err, ErrNotFound) {
 			return false, nil
 		}
@@ -21,7 +22,7 @@ func RelayEventPeerProjects(event RemoteEvent, lookup *EventIssueLookup, visit f
 			return false, err
 		}
 		if issue.ProjectUID != "" {
-			return false, visit(issue.ProjectUID)
+			return false, visit(issue.ProjectUID, link)
 		}
 		return false, nil
 	}
@@ -30,7 +31,7 @@ func RelayEventPeerProjects(event RemoteEvent, lookup *EventIssueLookup, visit f
 			return false, nil
 		}
 		issue, err := lookup.IssueByUID(uid)
-		return add(issue, err)
+		return add(issue, err, false)
 	}
 	linkUID := func(uid string) (bool, error) {
 		if uid == "" {
@@ -38,27 +39,27 @@ func RelayEventPeerProjects(event RemoteEvent, lookup *EventIssueLookup, visit f
 		}
 		issue, err := lookup.IssueByUID(uid)
 		if errors.Is(err, ErrNotFound) || (err == nil && issue.ProjectUID == "") {
-			return false, visit("")
+			return false, visit("", true)
 		}
-		return add(issue, err)
+		return add(issue, err, true)
 	}
 	issueRef := func(ref string) (bool, error) {
 		if ref == "" {
 			return false, nil
 		}
 		issue, err := lookup.IssueByRef(event.ProjectUID, ref)
-		return add(issue, err)
+		return add(issue, err, false)
 	}
 	comment := func(uid, kind string) (bool, error) {
 		if len(uid) != 26 || !ValidCommentReplyKind(kind) {
 			return false, nil
 		}
 		issue, err := lookup.CommentIssueByUID(uid)
-		return add(issue, err)
+		return add(issue, err, false)
 	}
 	project := func(uid string) (bool, error) {
 		if uid != "" {
-			return false, visit(uid)
+			return false, visit(uid, false)
 		}
 		return false, nil
 	}
@@ -88,7 +89,7 @@ func RelayEventPeerProjects(event RemoteEvent, lookup *EventIssueLookup, visit f
 	_, err = notification.WalkEventPayload(snapshot.Payload, snapshot.Type, func(slot jsontext.Value) (bool, error) {
 		for _, uid := range notification.References(slot) {
 			issue, err := lookup.CommentIssueByUID(uid)
-			_, err = add(issue, err)
+			_, err = add(issue, err, false)
 			if err != nil {
 				return false, err
 			}
@@ -110,8 +111,8 @@ func AuthorizeRelayRelease(ctx context.Context, tx Transaction, lookup *EventIss
 // AuthorizeRelayReleasePrefix returns the first event that cannot be released.
 func AuthorizeRelayReleasePrefix(ctx context.Context, tx Transaction, lookup *EventIssueLookup, ownProjectUID string, events []RemoteEvent) (int, error) {
 	seen := map[string]bool{ownProjectUID: true}
-	visit := func(uid string) error {
-		if uid != ownProjectUID {
+	visit := func(uid string, link bool) error {
+		if link && uid != ownProjectUID {
 			if err := RequireEventFeatures(RelayPeerEventFeatures(ctx), RelayCrossLinksEventFeature); err != nil {
 				return err
 			}
