@@ -14,13 +14,19 @@ func validateRelayLinkEndpointsInProject(
 	tx *sql.Tx,
 	projectID int64,
 	event db.RemoteEvent,
+	rootForwarded bool,
 ) error {
-	if !db.FederationEventAffectsLinks(event.Type) {
+	if !db.FederationEventAffectsLinks(event.Type) || (rootForwarded && event.Type == "issue.unlinked") {
 		return nil
 	}
 	payload := db.PayloadMap(event.Payload)
 	if event.Type == "issue.links_changed" {
 		event.RelatedIssueUID = nil
+		if rootForwarded {
+			for _, key := range []string{"parent_removed_uid", "blocks_removed_uids", "blocked_by_removed_uids", "related_removed_uids"} {
+				delete(payload, key)
+			}
+		}
 		if parent, ok := db.StringValue(payload["parent_set_uid"]); ok && parent != "" {
 			delete(payload, "parent_removed_uid") // The fold protects the root parent during replacement.
 		}

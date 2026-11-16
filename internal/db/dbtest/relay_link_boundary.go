@@ -215,6 +215,33 @@ func RunRelayLinkBoundaryFollowsActiveGrants(t *testing.T, store db.Storage, bac
 	require.NoError(t, err)
 	_, err = replica.SetRelayBindingConfig(ctx, replicaProject.ID, db.RelayBindingConfig{ProtocolVersion: db.RelayProtocolVersion, BindingUID: grant.Enrollment.RelayBindingUID, AuthorityUID: store.InstanceUID(), UpstreamInstanceUID: store.InstanceUID(), HubPath: []string{store.InstanceUID(), replica.InstanceUID()}, LocalActor: "member", ResetEpoch: 1})
 	require.NoError(t, err)
+	var sequence int64
+	for _, kind := range []string{"issue.created", "issue.linked", "issue.unlinked"} {
+		for _, event := range events {
+			if event.Type != kind || event.IssueUID == nil || *event.IssueUID != source.UID {
+				continue
+			}
+			sequence++
+			body, err := db.EncodeRelaySourceEvent(event)
+			require.NoError(t, err)
+			path := []string{store.InstanceUID()}
+			if event.OriginInstanceUID != store.InstanceUID() {
+				path = []string{event.OriginInstanceUID, store.InstanceUID()}
+			}
+			envelope, err := db.SealRelayEnvelope(db.RelayEnvelope{Version: db.RelayProtocolVersion, BindingUID: grant.Enrollment.RelayBindingUID, ProjectUID: fixture.project.UID, AuthorityUID: store.InstanceUID(), SenderInstanceUID: store.InstanceUID(), ReceiverInstanceUID: replica.InstanceUID(), Epoch: grant.Enrollment.RelayResetEpoch, Sequence: sequence, Stream: db.RelayStreamEvent, Path: path, SourceUID: event.EventUID, SourceHash: event.ContentHash, Body: body})
+			require.NoError(t, err)
+			_, err = replica.AcceptRelayDeliveries(ctx, grant.Enrollment.RelayBindingUID, db.RelayBatch{After: sequence - 1, Stream: db.RelayStreamEvent, Envelopes: []db.RelayEnvelope{envelope}})
+			require.NoError(t, err, "root-forwarded %s must be accepted", kind)
+			replicaIssue, err := replica.IssueByUID(ctx, source.UID, db.IncludeDeletedYes)
+			require.NoError(t, err)
+			if kind == "issue.linked" {
+				require.Equal(t, []string{target.UID}, linkTargetUIDs(t, replica, replicaIssue.ID))
+			} else if kind == "issue.unlinked" {
+				require.Empty(t, linkTargetUIDs(t, replica, replicaIssue.ID))
+			}
+		}
+	}
+	require.EqualValues(t, 3, sequence)
 	require.NoError(t, replica.(db.RelayResetStore).InstallRelayReset(ctx, grant.Enrollment.RelayBindingUID, checkpoint.Manifest, checkpoint.Snapshot, checkpoint.Translation))
 	replicaIssue, err := replica.IssueByUID(ctx, source.UID, db.IncludeDeletedYes)
 	require.NoError(t, err)
