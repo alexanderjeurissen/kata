@@ -43,6 +43,7 @@ func TestFederationReplayCostUnchangedIssues(t *testing.T) {
 		fetchCounts = append(fetchCounts, fetches)
 	}
 	// Full replay still scans history and joins comments to issues.
+	// Endpoint resolution also reads issue and project indexes during link folding.
 	// Allow those reads while catching per-issue updates and comment ownership checks.
-	require.LessOrEqual(t, fetchCounts[1], fetchCounts[0]+300)
+	require.LessOrEqual(t, fetchCounts[1], fetchCounts[0]+330)
 }
