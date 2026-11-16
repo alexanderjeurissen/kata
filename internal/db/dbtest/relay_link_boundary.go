@@ -86,6 +86,8 @@ func RunRelayLinkBoundaryKeepsSameProjectEffects(t *testing.T, store db.Storage)
 		require.NoError(t, err)
 		require.Empty(t, linkTargetUIDs(t, store, created.ID))
 
+		_, err = store.UpsertFederationBinding(ctx, db.FederationBinding{ProjectID: fixture.sibling.ID, Role: db.FederationRoleHub, HubProjectID: fixture.sibling.ID, HubProjectUID: fixture.sibling.UID, Enabled: true})
+		require.NoError(t, err)
 		_, _, err = store.CreateIssue(ctx, db.CreateIssueParams{ProjectID: fixture.sibling.ID, UID: foreignPeer, Title: "Sibling peer", Author: "sibling-member"})
 		require.NoError(t, err)
 		_, _, err = store.CreateIssue(ctx, db.CreateIssueParams{ProjectID: fixture.project.ID, UID: localPeer, Title: "Local peer", Author: "relay-member"})
