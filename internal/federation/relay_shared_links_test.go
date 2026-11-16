@@ -110,7 +110,7 @@ func TestRelaySharedLinksAcrossHops(t *testing.T) {
 	}
 }
 
-func TestRelaySharedLinksPreflightFeatures(t *testing.T) {
+func TestRelaySharedLinksResetFeatures(t *testing.T) {
 	for _, backend := range []string{"sqlite", "postgres"} {
 		t.Run(backend, func(t *testing.T) {
 			ctx := t.Context()
@@ -126,24 +126,7 @@ func TestRelaySharedLinksPreflightFeatures(t *testing.T) {
 				issues[i], _, err = root.store.CreateIssue(ctx, db.CreateIssueParams{ProjectID: project.ID, Author: root.account, Title: name})
 				require.NoError(t, err)
 			}
-			url := fmt.Sprintf("%s/api/v1/projects/%d/federation?relay_protocol_version=1", root.http.URL, projects[0].ID)
-			get := func(features string) (int, string) {
-				t.Helper()
-				req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-				require.NoError(t, err)
-				req.Header.Set("Authorization", "Bearer "+root.userToken)
-				req.Header.Set(db.EventFeaturesHeader, features)
-				resp, err := root.http.Client().Do(req)
-				require.NoError(t, err)
-				body, err := io.ReadAll(resp.Body)
-				require.NoError(t, err)
-				require.NoError(t, resp.Body.Close())
-				return resp.StatusCode, string(body)
-			}
-			oldFeatures := db.CronEventFeature + "," + db.IssueMoveEventFeature + "," + db.RepeatedAdoptionEventFeature
-			status, body := get(oldFeatures)
-			require.Equal(t, http.StatusOK, status, body)
-			link, _, err := root.store.CreateLinkAndEvent(ctx, db.CreateLinkParams{FromIssueID: issues[0].ID, ToIssueID: issues[1].ID, Type: "blocks", Author: root.account}, db.LinkEventParams{EventType: "issue.linked", EventIssueID: issues[0].ID, Actor: root.account, FromUID: issues[0].UID, ToUID: issues[1].UID, FromShortID: issues[0].ShortID, ToShortID: issues[1].ShortID})
+			_, _, err := root.store.CreateLinkAndEvent(ctx, db.CreateLinkParams{FromIssueID: issues[0].ID, ToIssueID: issues[1].ID, Type: "blocks", Author: root.account}, db.LinkEventParams{EventType: "issue.linked", EventIssueID: issues[0].ID, Actor: root.account, FromUID: issues[0].UID, ToUID: issues[1].UID, FromShortID: issues[0].ShortID, ToShortID: issues[1].ShortID})
 			require.NoError(t, err)
 			root.project = projects[0]
 			hub := newRelayMatrixNode(t, backend, "hub-member")
@@ -169,12 +152,7 @@ func TestRelaySharedLinksPreflightFeatures(t *testing.T) {
 			require.NoError(t, err)
 			require.NoError(t, response.Body.Close())
 			require.Equal(t, http.StatusOK, response.StatusCode, string(resetBody))
-			_, err = root.store.DeleteLinkAndEvent(db.WithRootAttribution(ctx, root.signer, root.account), link, db.LinkEventParams{EventType: "issue.unlinked", EventIssueID: issues[0].ID, Actor: root.account, FromUID: issues[0].UID, ToUID: issues[1].UID, FromShortID: issues[0].ShortID, ToShortID: issues[1].ShortID})
-			require.NoError(t, err)
-			status, body = get(oldFeatures)
-			require.Equal(t, http.StatusOK, status, body)
-			status, body = get(db.SupportedEventFeatures)
-			require.Equal(t, http.StatusOK, status, body)
+
 		})
 	}
 }

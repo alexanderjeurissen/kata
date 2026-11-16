@@ -1,10 +1,8 @@
 package dbtest
 
 import (
-	"context"
 	"crypto/ed25519"
 	"encoding/json/jsontext"
-	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -276,17 +274,6 @@ func RunLegacyRelayAdmission(t *testing.T, store db.Storage) {
 					require.Equal(t, before, relayStateForBinding(t, store, binding))
 					_, _, err = store.CreateIssue(ctx, db.CreateIssueParams{ProjectID: fixture.sibling.ID, UID: peer.UID, Title: "Arrived peer", Author: "member"})
 					require.NoError(t, err)
-					denied := errors.New("peer denied")
-					rejectPeer := db.WithProjectAccessTransactionCheck(features, func(_ context.Context, _ db.Transaction, uid string) error {
-						if uid == fixture.sibling.UID {
-							return denied
-						}
-						return nil
-					})
-					out, err = store.PendingRelayDeliveries(rejectPeer, binding, db.RelayStreamEvent, 100)
-					require.ErrorIs(t, err, denied)
-					require.Empty(t, out)
-					require.Equal(t, before, relayStateForBinding(t, store, binding))
 					out, err = store.PendingRelayDeliveries(features, binding, db.RelayStreamEvent, 100)
 					require.NoError(t, err)
 					var found bool

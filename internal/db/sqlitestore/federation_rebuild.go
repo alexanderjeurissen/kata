@@ -150,16 +150,6 @@ func (d *Store) prepareFederationRebuild(ctx context.Context, projectID int64) (
 		m := &p.materialization
 		events := p.linkEvents
 		needsRelayFold := slices.ContainsFunc(events, m.relayOrigins.relaySourced)
-		for _, id := range m.linkProjects {
-			if needsRelayFold {
-				break
-			}
-			active, err := relayProjectsActiveTx(ctx, tx, id, id)
-			if err != nil {
-				return preparedFederationRebuild{}, err
-			}
-			needsRelayFold = active
-		}
 		if !needsRelayFold {
 			m.links = db.FoldEvents(events)
 		} else {

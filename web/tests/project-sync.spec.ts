@@ -39,7 +39,13 @@ test('local project readers see native sync status with bounded embedding summar
   )
   expect(enabled.ok()).toBe(true)
   kata.recordSyncDiagnosticError()
+  const statusRead = page.waitForResponse(
+    (response) => new URL(response.url()).pathname === statusPath,
+  )
   await region.getByRole('button', { name: 'Refresh sync' }).click()
+  const browserBody = await (await statusRead).text()
+  expect(browserBody).not.toContain('example sync failure')
+  expect(browserBody).not.toContain('example held-back batch failure')
   await expect(region.getByText('Sync needs attention')).toBeVisible()
   await expect(region.getByText('Sync disabled', { exact: true })).toBeVisible()
   await expect(region.getByText('Embeddings: unconfigured')).toBeVisible()

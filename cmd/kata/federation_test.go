@@ -158,6 +158,27 @@ func TestFederationStatusProjectRenamedDuringLookup(t *testing.T) {
 	assert.Equal(t, "renamed-project", result.Statuses[0].ProjectName)
 }
 
+func TestFederationStatusProjectMember(t *testing.T) {
+	env := testenv.New(t, testenv.WithAuthToken("owner-token"), testenv.WithRequireTokenIdentity())
+	project, err := env.DB.CreateProject(t.Context(), "spoke-project")
+	require.NoError(t, err)
+	_, err = env.DB.UpsertFederationBinding(t.Context(), db.FederationBinding{ProjectID: project.ID, Role: db.FederationRoleSpoke, HubURL: "http://127.0.0.1:7373", HubProjectID: 42, HubProjectUID: project.UID, Actor: "owner", Enabled: true})
+	require.NoError(t, err)
+	require.NoError(t, env.DB.RecordFederationSyncError(t.Context(), project.ID, errors.New("hub offline"), time.Now()))
+	team, _, err := env.DB.CreateTeam(t.Context(), "project-team", "owner")
+	require.NoError(t, err)
+	_, err = env.DB.SetTeamMembership(t.Context(), team.UID, "member", true, "owner")
+	require.NoError(t, err)
+	_, _, err = env.DB.SetProjectAccessPolicy(t.Context(), db.ProjectAccessPolicy{ProjectUID: project.UID, Visibility: "teams", TeamUIDs: []string{team.UID}}, "owner")
+	require.NoError(t, err)
+	_, _, err = env.DB.CreateAPIToken(t.Context(), db.CreateAPITokenParams{PlaintextToken: "member-token", Actor: "member", AdminActor: db.BootstrapActor})
+	require.NoError(t, err)
+	t.Setenv("KATA_AUTH_TOKEN", "member-token")
+	out := requireCmdOutput(t, env, "federation", "status", "--project", project.Name, "--format", "json")
+	assert.Contains(t, out, project.Name)
+	assert.Contains(t, out, "hub offline")
+}
+
 func TestFederationStatusProjectAnonymousReadonly(t *testing.T) {
 	env := testenv.New(t, testenv.WithInsecureReadonly())
 	project, err := env.DB.CreateProject(t.Context(), "spoke-project")

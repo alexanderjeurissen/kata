@@ -171,25 +171,51 @@ func filterRelayCrossProjectLinkEvents(
 		return nil, err
 	}
 
-	authority, err := relayFoldAuthorityTx(ctx, tx, issueProjects, classifier.instanceUID)
-	if err != nil {
-		return nil, err
-	}
 	filtered := make([]db.FoldEvent, 0, len(events))
 	for _, event := range events {
 		if !classifier.relaySourced(event) {
 			filtered = append(filtered, event)
 			continue
 		}
+		pin, err := rootPinTx(ctx, tx, event.ProjectUID, "")
+		if err != nil && !errors.Is(err, db.ErrNotFound) {
+			return nil, err
+		}
+		rootOrigin := err == nil && pin.AuthorityUID == event.OriginInstanceUID
+		var lookupErr error
+		shared := map[string]bool{}
 		crosses := func(uid string) bool {
-			peer := authority.Projects[uid]
-			root := authority.Roots[event.ProjectUID]
-			shared := root != "" && root == event.OriginInstanceUID && authority.Roots[peer] == root && authority.Groups[event.ProjectUID][peer]
-			return peer != "" && peer != event.ProjectUID && !shared
+			if lookupErr != nil {
+				return true
+			}
+			peer := issueProjects[uid]
+			if peer == "" || peer == event.ProjectUID {
+				return false
+			}
+			if !rootOrigin {
+				return true
+			}
+			if allowed, ok := shared[peer]; ok {
+				return !allowed
+			}
+			var sourceID, peerID int64
+			lookupErr = tx.QueryRowContext(ctx, `SELECT id FROM projects WHERE uid=$1 AND deleted_at IS NULL`, event.ProjectUID).Scan(&sourceID)
+			if lookupErr == nil {
+				lookupErr = tx.QueryRowContext(ctx, `SELECT id FROM projects WHERE uid=$1 AND deleted_at IS NULL`, peer).Scan(&peerID)
+			}
+			var allowed bool
+			if lookupErr == nil {
+				allowed, lookupErr = relaySharedProjectsTx(ctx, tx, sourceID, peerID, false)
+			}
+			shared[peer] = allowed
+			return !allowed
 		}
 		stripped, keep, err := db.StripCrossProjectLinkAdditions(event, crosses)
 		if err != nil {
 			return nil, err
+		}
+		if lookupErr != nil {
+			return nil, lookupErr
 		}
 		if keep {
 			filtered = append(filtered, stripped)
@@ -241,65 +267,4 @@ func relayLinkEndpointProjects(ctx context.Context, tx *sql.Tx, events []db.Fold
 		return nil, err
 	}
 	return owners, nil
-}
-
-type relayFoldAuthority struct {
-	Projects map[string]string
-	Roots    map[string]string
-	Groups   map[string]map[string]bool
-}
-
-// relayFoldAuthorityTx loads live project membership for relay link folding.
-func relayFoldAuthorityTx(ctx context.Context, tx *sql.Tx, owners map[string]string, instance string) (relayFoldAuthority, error) {
-	a := relayFoldAuthority{Projects: owners, Roots: map[string]string{}, Groups: map[string]map[string]bool{}}
-	ids := map[string]int64{}
-	uids := map[int64]string{}
-	for _, uid := range owners {
-		if uid == "" {
-			continue
-		}
-		if _, exists := ids[uid]; exists {
-			continue
-		}
-		var id int64
-		err := tx.QueryRowContext(ctx, `SELECT id FROM projects WHERE uid=$1 AND deleted_at IS NULL`, uid).Scan(&id)
-		if errors.Is(err, sql.ErrNoRows) {
-			continue
-		}
-		if err != nil {
-			return a, err
-		}
-		ids[uid], uids[id] = id, uid
-	}
-	for uid, id := range ids {
-		binding, err := scanFederationBinding(tx.QueryRowContext(ctx, federationBindingSelect+` WHERE project_id=$1`, id))
-		if errors.Is(err, db.ErrNotFound) {
-			continue
-		}
-		if err != nil {
-			return a, err
-		}
-		if !binding.Enabled {
-			continue
-		}
-		root, err := relayProjectRootTx(ctx, tx, uid, binding, instance)
-		if err != nil {
-			return a, err
-		}
-		if root == "" {
-			continue
-		}
-		a.Roots[uid] = root
-		group, err := federationBindingGroupProjectIDsWithLock(ctx, tx, binding, false)
-		if err != nil {
-			return a, err
-		}
-		a.Groups[uid] = map[string]bool{}
-		for _, peer := range group {
-			if peerUID := uids[peer]; peerUID != "" {
-				a.Groups[uid][peerUID] = true
-			}
-		}
-	}
-	return a, nil
 }

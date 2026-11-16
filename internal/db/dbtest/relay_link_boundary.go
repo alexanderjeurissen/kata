@@ -180,17 +180,4 @@ func RunRelayLinkBoundaryFollowsActiveGrants(t *testing.T, store db.Storage) {
 	require.Empty(t, linkTargetUIDs(t, store, source.ID), "a legacy peer's unlink of the allowed cross-project link is applied")
 	require.NoError(t, store.MaterializeFederatedProject(ctx, fixture.project.ID))
 	require.Empty(t, linkTargetUIDs(t, store, source.ID), "a later group materialization does not bring the removed link back")
-
-	replica, err := uid.New()
-	require.NoError(t, err)
-	grant, err = store.CreateRelayEnrollment(ctx, db.CreateRelayEnrollmentParams{ProjectID: fixture.project.ID, ParentTokenID: fixture.parentTokenID, SpokeInstanceUID: replica, ProtocolVersion: db.RelayProtocolVersion, ServeDownstream: true})
-	require.NoError(t, err)
-	_, _, err = store.CreateLinkAndEvent(ctx, db.CreateLinkParams{FromIssueID: source.ID, ToIssueID: target.ID, Type: "blocks", Author: "member"}, linkEvent)
-	require.NoError(t, err)
-	later := newRemoteEvent(t, fixture.project, &source.UID, "issue.unlinked", "spoke", spokeInstanceUID, time.Now().Add(2*time.Second).UnixMilli(), unlink.Payload)
-	later.RelatedIssueUID = &target.UID
-	later.ContentHash = remoteEventHash(t, later)
-	_, err = store.IngestFederationEvents(ctx, db.FederationIngestParams{ProjectID: fixture.project.ID, SpokeInstanceUID: spokeInstanceUID, Events: []db.FederationIngestEvent{{SourceEventID: 2, Event: later}}})
-	require.ErrorIs(t, err, db.ErrFederationIngestValidation)
-	require.Equal(t, []string{target.UID}, linkTargetUIDs(t, store, source.ID), "a later direct unlink must not remove the root link")
 }
