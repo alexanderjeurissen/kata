@@ -67,9 +67,13 @@ func RunRelayCrossProjectBoundary(t *testing.T, store db.Storage) {
 		if i == 0 {
 			replicaProject = project
 		}
-		_, err = store.UpsertFederationBinding(ctx, db.FederationBinding{ProjectID: project.ID, Role: db.FederationRoleHub, HubProjectID: first.ID, HubProjectUID: first.UID, Enabled: true})
+		_, err = store.UpsertFederationBinding(ctx, db.FederationBinding{ProjectID: project.ID, Role: db.FederationRoleSpoke, HubURL: "https://hub.example", HubProjectID: first.ID, HubProjectUID: project.UID, Actor: "member", PushEnabled: true, Enabled: true})
 		require.NoError(t, err)
 		require.NoError(t, store.PinRootAuthority(ctx, db.RootKeyPin{ProjectUID: project.UID, AuthorityUID: rootUID, KeyID: db.RootPublicKeyID(public), PublicKey: public}))
+		if i == 0 {
+			_, err = store.SetRelayBindingConfig(ctx, project.ID, db.RelayBindingConfig{ProtocolVersion: db.RelayProtocolVersion, BindingUID: "00000000000000000000000014", AuthorityUID: rootUID, UpstreamInstanceUID: rootUID, HubPath: []string{rootUID, store.InstanceUID()}, LocalActor: "member", ServeDownstream: true, ResetEpoch: 1})
+			require.NoError(t, err)
+		}
 		replicaIssues[i], _, err = store.CreateIssue(ctx, db.CreateIssueParams{ProjectID: project.ID, Title: name, Author: "member"})
 		require.NoError(t, err)
 	}

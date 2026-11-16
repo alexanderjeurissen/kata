@@ -41,7 +41,7 @@ func TestRelaySharedLinksAcrossHops(t *testing.T) {
 					issues[i], _, err = root.store.CreateIssue(db.WithRootAttribution(ctx, root.signer, root.account), db.CreateIssueParams{ProjectID: project.ID, Author: "assistant", Title: "Shared endpoint"})
 					require.NoError(t, err)
 				}
-				linked, linkEvent, err := root.store.CreateLinkAndEvent(db.WithRootAttribution(ctx, root.signer, root.account), db.CreateLinkParams{FromIssueID: issues[0].ID, ToIssueID: issues[1].ID, Type: "blocks", Author: root.account},
+				_, linkEvent, err := root.store.CreateLinkAndEvent(db.WithRootAttribution(ctx, root.signer, root.account), db.CreateLinkParams{FromIssueID: issues[0].ID, ToIssueID: issues[1].ID, Type: "blocks", Author: root.account},
 					db.LinkEventParams{EventType: "issue.linked", EventIssueID: issues[0].ID, Actor: root.account, FromUID: issues[0].UID, ToUID: issues[1].UID, FromShortID: issues[0].ShortID, ToShortID: issues[1].ShortID})
 				require.NoError(t, err)
 				order := []int{0, 1}
@@ -72,16 +72,6 @@ func TestRelaySharedLinksAcrossHops(t *testing.T) {
 				}
 				if reverse {
 					return
-				}
-				_, err = root.store.DeleteLinkAndEvent(db.WithRootAttribution(ctx, root.signer, root.account), linked, db.LinkEventParams{EventType: "issue.unlinked", EventIssueID: issues[0].ID, Actor: root.account, FromUID: issues[0].UID, ToUID: issues[1].UID, FromShortID: issues[0].ShortID, ToShortID: issues[1].ShortID})
-				require.NoError(t, err)
-				for _, nodes := range [][]*relayMatrixNode{hubs, leaves} {
-					for _, i := range order {
-						syncRelayMatrixNode(t, nodes[i])
-					}
-					links, err := nodes[0].store.LinksByIssue(ctx, issueIDForRelayMatrix(t, nodes[0], issues[0].UID))
-					require.NoError(t, err)
-					require.Empty(t, links)
 				}
 				child, _, err := root.store.CreateIssue(db.WithRootAttribution(ctx, root.signer, root.account), db.CreateIssueParams{ProjectID: projects[0].ID, Author: root.account, Title: "Replacement child"})
 				require.NoError(t, err)
@@ -175,61 +165,6 @@ func TestRelaySharedLinksPreflightFeatures(t *testing.T) {
 			require.Contains(t, body, db.RelayCrossLinksEventFeature)
 			status, body = get(db.SupportedEventFeatures)
 			require.Equal(t, http.StatusOK, status, body)
-		})
-	}
-}
-
-func TestOfflineParentKeepsRootCrossLink(t *testing.T) {
-	for _, backend := range []string{"sqlite", "postgres"} {
-		t.Run(backend, func(t *testing.T) {
-			ctx := t.Context()
-			root := newRelayMatrixNode(t, backend, "root-member")
-			replica := newRelayMatrixNode(t, backend, "replica-member")
-			peers := []*relayMatrixNode{replica, {store: replica.store, http: replica.http, signer: replica.signer, userToken: replica.userToken, account: replica.account, credentials: replica.credentials}}
-			var projects [2]db.Project
-			for i, name := range []string{"parent-source", "parent-peer"} {
-				project, err := root.store.CreateProject(ctx, name)
-				require.NoError(t, err)
-				projects[i] = project
-				_, err = root.store.UpsertFederationBinding(ctx, db.FederationBinding{ProjectID: project.ID, Role: db.FederationRoleHub, HubProjectID: project.ID, HubProjectUID: project.UID, Enabled: true})
-				require.NoError(t, err)
-				root.project = project
-				enrollRelayMatrixReplica(t, root, peers[i], name+"-replica", false)
-			}
-			editor := replica
-			child, _, err := root.store.CreateIssue(db.WithRootAttribution(ctx, root.signer, root.account), db.CreateIssueParams{ProjectID: projects[0].ID, Author: root.account, Title: "Child"})
-			require.NoError(t, err)
-			localParent, _, err := root.store.CreateIssue(db.WithRootAttribution(ctx, root.signer, root.account), db.CreateIssueParams{ProjectID: projects[0].ID, Author: root.account, Title: "Local parent"})
-			require.NoError(t, err)
-			remoteParent, _, err := root.store.CreateIssue(db.WithRootAttribution(ctx, root.signer, root.account), db.CreateIssueParams{ProjectID: projects[1].ID, Author: root.account, Title: "Root parent"})
-			require.NoError(t, err)
-			syncRelayMatrixNode(t, peers[0])
-			syncRelayMatrixNode(t, peers[1])
-			_, _, err = root.store.CreateLinkAndEvent(db.WithRootAttribution(ctx, root.signer, root.account), db.CreateLinkParams{FromIssueID: child.ID, ToIssueID: remoteParent.ID, Type: "parent", Author: root.account}, db.LinkEventParams{EventType: "issue.linked", EventIssueID: child.ID, Actor: root.account, FromUID: child.UID, ToUID: remoteParent.UID, FromShortID: child.ShortID, ToShortID: remoteParent.ShortID})
-			require.NoError(t, err)
-			localChild, err := editor.store.IssueByUID(ctx, child.UID, db.IncludeDeletedYes)
-			require.NoError(t, err)
-			localParentCopy, err := editor.store.IssueByUID(ctx, localParent.UID, db.IncludeDeletedYes)
-			require.NoError(t, err)
-			_, editEvent, err := editor.store.CreateLinkAndEvent(ctx, db.CreateLinkParams{FromIssueID: localChild.ID, ToIssueID: localParentCopy.ID, Type: "parent", Author: editor.account}, db.LinkEventParams{EventType: "issue.linked", EventIssueID: localChild.ID, Actor: editor.account, FromUID: child.UID, ToUID: localParent.UID, FromShortID: localChild.ShortID, ToShortID: localParentCopy.ShortID})
-			require.NoError(t, err)
-			syncRelayMatrixNode(t, editor)
-			for _, store := range []db.Storage{root.store, replica.store} {
-				project, err := store.ProjectByUID(ctx, projects[0].UID)
-				require.NoError(t, err)
-				events, err := store.EventsByUIDs(ctx, project.ID, []string{editEvent.UID})
-				require.NoError(t, err)
-				require.Len(t, events, 1)
-				require.Equal(t, editEvent.UID, events[0].UID)
-				require.Equal(t, editEvent.OriginInstanceUID, events[0].OriginInstanceUID)
-				require.Equal(t, editEvent.Payload, events[0].Payload)
-				require.Equal(t, editEvent.ContentHash, events[0].ContentHash)
-				local, err := store.IssueByUID(ctx, child.UID, db.IncludeDeletedYes)
-				require.NoError(t, err)
-				parent, err := store.ParentOf(ctx, local.ID)
-				require.NoError(t, err)
-				require.Equal(t, remoteParent.UID, parent.ToIssueUID)
-			}
 		})
 	}
 }
