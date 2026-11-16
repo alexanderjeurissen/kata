@@ -34,7 +34,7 @@ func TestRelayTransportErrorClassification(t *testing.T) {
 func TestRelayTransportErrorUnresolvedLink(t *testing.T) {
 	lookup := db.NewEventIssueLookup(func(string) (db.Issue, error) { return db.Issue{}, db.ErrNotFound }, nil, nil)
 	err := db.RelayEventPeerProjects(db.RemoteEvent{Type: "issue.linked", Payload: jsontext.Value(`{"to_uid":"missing"}`)}, lookup, func(string) error { return nil })
-	require.Error(t, err)
+	require.ErrorIs(t, err, db.ErrRelayLinkUnresolved)
 	var apiErr *api.APIError
 	require.ErrorAs(t, relayTransportError(err), &apiErr)
 	require.Equal(t, http.StatusNotFound, apiErr.Status)

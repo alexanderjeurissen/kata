@@ -224,6 +224,9 @@ var (
 	// after the relay handshake was prepared; the peer must enroll again.
 	ErrRelayRootChanged = errors.New("relay root key changed since the handshake")
 
+	// ErrRelayLinkUnresolved withholds a link until its project can be checked.
+	ErrRelayLinkUnresolved = errors.New("relay link endpoint unresolved")
+
 	// ErrRemoteEventHashMismatch reports a remote event whose advertised content
 	// hash does not match the portable event fields.
 	ErrRemoteEventHashMismatch = errors.New("remote event content hash mismatch")
