@@ -58,8 +58,8 @@ func RunRelayCrossLinkResetHistory(t *testing.T, root db.Storage, backend Backen
 		}
 		return nil
 	})
-	syncRelayHop(t, features, root, hub, peerBinding, peerEpoch, db.RelayStreamEvent)
-	syncRelayHop(t, features, root, hub, binding, bindingEpoch, db.RelayStreamEvent)
+	syncRelayHop(features, t, root, hub, peerBinding, peerEpoch, db.RelayStreamEvent)
+	syncRelayHop(features, t, root, hub, binding, bindingEpoch, db.RelayStreamEvent)
 	hubIssue, err := hub.IssueByUID(ctx, issues[0].UID, db.IncludeDeletedYes)
 	require.NoError(t, err)
 	require.Empty(t, linkTargetUIDs(t, hub, hubIssue.ID), "forwarded events preserve the direct unlink")
@@ -147,7 +147,7 @@ func RunRelayCrossLinkResetHistory(t *testing.T, root db.Storage, backend Backen
 	require.NoError(t, err)
 	downstream, downstreamEpoch := setupRelayHop(t, hub, leaf, hubProject, "reset-leaf", false)
 	streams := []string{db.RelayStreamEvent, db.RelayStreamReceipt, db.RelayStreamArtifact}
-	syncRelayHop(t, features, hub, nil, downstream, downstreamEpoch, streams...)
+	syncRelayHop(features, t, hub, nil, downstream, downstreamEpoch, streams...)
 	beforeHub := observe(hub, hubProject)
 	_, err = hubResets.CreateRelayReset(ctx, downstream, db.RootAttributionSigner{})
 	require.ErrorIs(t, err, db.ErrUnsupportedEventFeatures)
@@ -163,7 +163,7 @@ func RunRelayCrossLinkResetHistory(t *testing.T, root db.Storage, backend Backen
 	peerProject, err := hub.ProjectByUID(ctx, projects[1].UID)
 	require.NoError(t, err)
 	peerDownstream, peerDownstreamEpoch := setupRelayHop(t, hub, leaf, peerProject, "reset-peer-leaf", false)
-	syncRelayHop(t, features, hub, nil, peerDownstream, peerDownstreamEpoch, streams...)
+	syncRelayHop(features, t, hub, nil, peerDownstream, peerDownstreamEpoch, streams...)
 	peerForwarded, err := hubResets.CreateRelayReset(features, peerDownstream, db.RootAttributionSigner{})
 	require.NoError(t, err)
 	leafResets := leaf.(db.RelayResetStore)

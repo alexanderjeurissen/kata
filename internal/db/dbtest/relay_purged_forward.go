@@ -100,7 +100,7 @@ func RunRelayPurgedForward(t *testing.T, backend Backend) {
 	}
 
 	rootBinding, rootEpoch := setupRelayHop(t, root, hub, projects[0], "purge-hub", true)
-	syncRelayHop(t, features, root, hub, rootBinding, rootEpoch, db.RelayStreamEvent)
+	syncRelayHop(features, t, root, hub, rootBinding, rootEpoch, db.RelayStreamEvent)
 	refreshed, err := rootResets.CreateRelayReset(features, rootBinding, signer)
 	require.NoError(t, err)
 	refreshedEvents, _, err := db.DecodeRootResetPayload(rootPin, refreshed.Snapshot)
@@ -113,7 +113,7 @@ func RunRelayPurgedForward(t *testing.T, backend Backend) {
 	hubProject, err := hub.ProjectByUID(ctx, projects[0].UID)
 	require.NoError(t, err)
 	leafBinding, leafEpoch := setupRelayHop(t, hub, leaf, hubProject, "purge-leaf", false)
-	syncRelayHop(t, features, hub, nil, leafBinding, leafEpoch, db.RelayStreamEvent, db.RelayStreamReceipt, db.RelayStreamArtifact)
+	syncRelayHop(features, t, hub, nil, leafBinding, leafEpoch, db.RelayStreamEvent, db.RelayStreamReceipt, db.RelayStreamArtifact)
 	forwarded, err := hub.(db.RelayResetStore).CreateRelayReset(features, leafBinding, db.RootAttributionSigner{})
 	require.NoError(t, err)
 	require.Equal(t, refreshed.Manifest, forwarded.Manifest)

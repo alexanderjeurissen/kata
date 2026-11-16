@@ -47,7 +47,7 @@ func setupRelayHop(t *testing.T, upstream, replica db.Storage, project db.Projec
 	return grant.Enrollment.RelayBindingUID, grant.Enrollment.RelayResetEpoch
 }
 
-func syncRelayHop(t *testing.T, features context.Context, from, to db.Storage, binding string, epoch int64, streams ...string) {
+func syncRelayHop(features context.Context, t *testing.T, from, to db.Storage, binding string, epoch int64, streams ...string) {
 	t.Helper()
 	for _, stream := range streams {
 		for {

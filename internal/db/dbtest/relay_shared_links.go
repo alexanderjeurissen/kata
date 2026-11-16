@@ -119,7 +119,7 @@ func RunRelayEventReleasePeerAccess(t *testing.T, store db.Storage) {
 	purgeGrant, err := store.CreateRelayEnrollment(ctx, db.CreateRelayEnrollmentParams{
 		ProjectID: fixture.Projects[0].ID, ParentTokenID: *fixture.Grant.Enrollment.ParentTokenID,
 		SpokeInstanceUID: "00000000000000000000000008", ProtocolVersion: db.RelayProtocolVersion,
-		Token: "purged-link-relay-test-token",
+		Token: "purged-link-relay-test-token", // #nosec G101 -- synthetic relay token used only in this test.
 	})
 	require.NoError(t, err)
 	purgeBinding := purgeGrant.Enrollment.RelayBindingUID
@@ -129,7 +129,7 @@ func RunRelayEventReleasePeerAccess(t *testing.T, store db.Storage) {
 		ProjectID: fixture.Projects[0].ID, Author: "member", Title: "After purge",
 	})
 	require.NoError(t, err)
-	out, err = store.PendingRelayDeliveries(rejectPeer, purgeBinding, db.RelayStreamEvent, 100)
+	_, err = store.PendingRelayDeliveries(rejectPeer, purgeBinding, db.RelayStreamEvent, 100)
 	require.ErrorIs(t, err, denied)
 	items, err := store.PendingRelayDeliveries(features, purgeBinding, db.RelayStreamEvent, 100)
 	require.NoError(t, err)
@@ -153,12 +153,12 @@ func RunRelayArchivedPeerEventRelease(t *testing.T, backend Backend) {
 		streams := []string{db.RelayStreamEvent, db.RelayStreamReceipt, db.RelayStreamArtifact}
 		peerBinding, peerEpoch := setupRelayHop(t, root, replica, fixture.Projects[1], "archive-peer", false)
 		sourceBinding, sourceEpoch := setupRelayHop(t, root, replica, fixture.Projects[0], "archive-source", true)
-		syncRelayHop(t, features, root, replica, peerBinding, peerEpoch, streams...)
-		syncRelayHop(t, features, root, replica, sourceBinding, sourceEpoch, streams...)
+		syncRelayHop(features, t, root, replica, peerBinding, peerEpoch, streams...)
+		syncRelayHop(features, t, root, replica, sourceBinding, sourceEpoch, streams...)
 		replicaSource, err := replica.ProjectByUID(ctx, fixture.Projects[0].UID)
 		require.NoError(t, err)
 		leafBinding, leafEpoch := setupRelayHop(t, replica, leaf, replicaSource, "archive-leaf", false)
-		syncRelayHop(t, features, replica, leaf, leafBinding, leafEpoch, streams...)
+		syncRelayHop(features, t, replica, leaf, leafBinding, leafEpoch, streams...)
 		replicaPeer, err := replica.ProjectByUID(ctx, fixture.Projects[1].UID)
 		require.NoError(t, err)
 		_, _, err = replica.RemoveProject(ctx, db.RemoveProjectParams{ProjectID: replicaPeer.ID, Actor: "member", Force: true})
@@ -167,7 +167,7 @@ func RunRelayArchivedPeerEventRelease(t *testing.T, backend Backend) {
 		require.NoError(t, err)
 		_, linkEvent, err := root.CreateLinkAndEvent(db.WithRootAttribution(ctx, fixture.Signer, "member"), db.CreateLinkParams{FromIssueID: newIssue.ID, ToIssueID: fixture.Issues[1].ID, Type: "blocks", Author: "member"}, db.LinkEventParams{EventType: "issue.linked", EventIssueID: newIssue.ID, Actor: "member", FromUID: newIssue.UID, ToUID: fixture.Issues[1].UID, FromShortID: newIssue.ShortID, ToShortID: fixture.Issues[1].ShortID})
 		require.NoError(t, err)
-		syncRelayHop(t, features, root, replica, sourceBinding, sourceEpoch, streams...)
+		syncRelayHop(features, t, root, replica, sourceBinding, sourceEpoch, streams...)
 		items, err := replica.PendingRelayDeliveries(features, leafBinding, db.RelayStreamEvent, 100)
 		require.NoError(t, err)
 		var found bool
