@@ -163,6 +163,18 @@ func RunRelayArchivedPeerEventRelease(t *testing.T, backend Backend) {
 		require.NoError(t, err)
 		_, _, err = replica.RemoveProject(ctx, db.RemoveProjectParams{ProjectID: replicaPeer.ID, Actor: "member", Force: true})
 		require.NoError(t, err)
+		binding, err := replica.FederationBindingByProject(ctx, replicaSource.ID)
+		require.NoError(t, err)
+		require.NotNil(t, binding.RelayConfig)
+		restored := *binding.RelayConfig
+		revoked := restored
+		revoked.UpstreamRevoked = true
+		binding, err = replica.SetRelayBindingConfig(ctx, replicaSource.ID, revoked, restored)
+		require.NoError(t, err)
+		require.True(t, binding.RelayConfig.UpstreamRevoked)
+		binding, err = replica.SetRelayBindingConfig(ctx, replicaSource.ID, restored, revoked)
+		require.NoError(t, err)
+		require.False(t, binding.RelayConfig.UpstreamRevoked)
 		newIssue, _, err := root.CreateIssue(db.WithRootAttribution(ctx, fixture.Signer, "member"), db.CreateIssueParams{ProjectID: fixture.Projects[0].ID, Author: "member", Title: "After archive"})
 		require.NoError(t, err)
 		_, linkEvent, err := root.CreateLinkAndEvent(db.WithRootAttribution(ctx, fixture.Signer, "member"), db.CreateLinkParams{FromIssueID: newIssue.ID, ToIssueID: fixture.Issues[1].ID, Type: "blocks", Author: "member"}, db.LinkEventParams{EventType: "issue.linked", EventIssueID: newIssue.ID, Actor: "member", FromUID: newIssue.UID, ToUID: fixture.Issues[1].UID, FromShortID: newIssue.ShortID, ToShortID: fixture.Issues[1].ShortID})
