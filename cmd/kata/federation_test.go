@@ -158,6 +158,18 @@ func TestFederationStatusProjectRenamedDuringLookup(t *testing.T) {
 	assert.Equal(t, "renamed-project", result.Statuses[0].ProjectName)
 }
 
+func TestFederationStatusProjectAnonymousReadonly(t *testing.T) {
+	env := testenv.New(t, testenv.WithInsecureReadonly())
+	project, err := env.DB.CreateProject(t.Context(), "spoke-project")
+	require.NoError(t, err)
+	_, err = env.DB.UpsertFederationBinding(t.Context(), db.FederationBinding{ProjectID: project.ID, Role: db.FederationRoleSpoke, HubURL: "http://127.0.0.1:7373", HubProjectID: 42, HubProjectUID: project.UID, Actor: "owner", Enabled: true})
+	require.NoError(t, err)
+	require.NoError(t, env.DB.RecordFederationSyncError(t.Context(), project.ID, errors.New("hub offline"), time.Now()))
+	out := requireCmdOutput(t, env, "federation", "status", "--project", project.Name)
+	assert.Contains(t, out, project.Name)
+	assert.Contains(t, out, "hub offline")
+}
+
 func TestFederationStatusProjectOlderDaemon(t *testing.T) {
 	env, project := setupFederationStatusCLIState(t)
 	other, err := env.DB.CreateProject(t.Context(), "other-project")

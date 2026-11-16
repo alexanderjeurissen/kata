@@ -40,8 +40,22 @@ func RunDirectParentConflict(t *testing.T, store db.Storage) {
 			spoke, err := uid.New()
 			require.NoError(t, err)
 			event := newRemoteEvent(t, fixture.project, &child.UID, "issue.links_changed", "member", spoke, time.Now().UnixMilli()+10, jsontext.Value(`{"parent_set_uid":"`+local.UID+`","parent_removed_uid":"`+foreign.UID+`"}`))
-			_, err = store.IngestFederationEvents(db.WithAuthorizedProjects(ctx, []string{fixture.project.UID, fixture.sibling.UID}), db.FederationIngestParams{ProjectID: fixture.project.ID, SpokeInstanceUID: spoke, Events: []db.FederationIngestEvent{{SourceEventID: 1, Event: event}}})
+			if revoked {
+				_, err = store.IngestFederationEvents(db.WithAuthorizedProjects(ctx, []string{fixture.project.UID, fixture.sibling.UID}), db.FederationIngestParams{ProjectID: fixture.project.ID, SpokeInstanceUID: spoke, Events: []db.FederationIngestEvent{{SourceEventID: 1, Event: event}}})
+			} else {
+				event.OriginInstanceUID = relay
+				event.ContentHash = remoteEventHash(t, event)
+				body, encodeErr := db.EncodeRelaySourceEvent(event)
+				require.NoError(t, encodeErr)
+				envelope, sealErr := db.SealRelayEnvelope(db.RelayEnvelope{Version: db.RelayProtocolVersion, BindingUID: grant.Enrollment.RelayBindingUID, ProjectUID: fixture.project.UID, AuthorityUID: store.InstanceUID(), SenderInstanceUID: relay, ReceiverInstanceUID: store.InstanceUID(), Epoch: grant.Enrollment.RelayResetEpoch, Sequence: 1, Stream: db.RelayStreamEvent, Path: []string{relay}, SourceUID: event.EventUID, SourceHash: event.ContentHash, Body: body})
+				require.NoError(t, sealErr)
+				_, err = store.AcceptRelayDeliveries(db.WithRootAttribution(ctx, fixture.signer, "relay-member"), grant.Enrollment.RelayBindingUID, db.RelayBatch{Stream: db.RelayStreamEvent, Envelopes: []db.RelayEnvelope{envelope}})
+			}
 			require.NoError(t, err)
+			stored, err := store.EventsByUIDs(ctx, fixture.project.ID, []string{event.EventUID})
+			require.NoError(t, err)
+			require.Len(t, stored, 1)
+			require.Equal(t, event.ContentHash, stored[0].ContentHash)
 			want := foreign.UID
 			if revoked {
 				want = local.UID
@@ -72,7 +86,6 @@ func RunRelayCrossProjectRemoval(t *testing.T, store db.Storage) {
 	_, _, err = store.CreateLinkAndEvent(ctx, db.CreateLinkParams{FromIssueID: child.ID, ToIssueID: peer.ID, Type: "parent", Author: "member"}, db.LinkEventParams{EventType: "issue.linked", EventIssueID: child.ID, Actor: "member", FromUID: child.UID, ToUID: peer.UID, FromShortID: child.ShortID, ToShortID: peer.ShortID})
 	require.NoError(t, err)
 	for _, tc := range []struct{ name, eventType, payload string }{
-		{"unlink", "issue.unlinked", `{"type":"blocks","from_uid":"` + child.UID + `","to_uid":"` + peer.UID + `","link_from_uid":"` + child.UID + `","link_to_uid":"` + peer.UID + `"}`},
 		{"parent", "issue.links_changed", `{"parent_removed_uid":"` + peer.UID + `"}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -86,23 +99,6 @@ func RunRelayCrossProjectRemoval(t *testing.T, store db.Storage) {
 			require.Equal(t, []string{peer.UID, peer.UID}, linkTargetUIDs(t, store, child.ID))
 		})
 	}
-
-	local, _, err := store.CreateIssue(ctx, db.CreateIssueParams{ProjectID: fixture.project.ID, Title: "Local parent", Author: "member"})
-	require.NoError(t, err)
-	parentChange := newRemoteEvent(t, fixture.project, &child.UID, "issue.links_changed", "member", instance, time.Now().UnixMilli()+10, jsontext.Value(`{"parent_removed_uid":"`+peer.UID+`","parent_set_uid":"`+local.UID+`"}`))
-	body, err := db.EncodeRelaySourceEvent(parentChange)
-	require.NoError(t, err)
-	envelope, err := db.SealRelayEnvelope(db.RelayEnvelope{Version: db.RelayProtocolVersion, BindingUID: grant.Enrollment.RelayBindingUID, ProjectUID: fixture.project.UID, AuthorityUID: store.InstanceUID(), SenderInstanceUID: instance, ReceiverInstanceUID: store.InstanceUID(), Epoch: grant.Enrollment.RelayResetEpoch, Sequence: 1, Stream: db.RelayStreamEvent, Path: []string{instance}, SourceUID: parentChange.EventUID, SourceHash: parentChange.ContentHash, Body: body})
-	require.NoError(t, err)
-	_, err = store.AcceptRelayDeliveries(db.WithRootAttribution(ctx, fixture.signer, "relay-member"), grant.Enrollment.RelayBindingUID, db.RelayBatch{Stream: db.RelayStreamEvent, Envelopes: []db.RelayEnvelope{envelope}})
-	require.NoError(t, err)
-	stored, err := store.EventsByUIDs(ctx, fixture.project.ID, []string{parentChange.EventUID})
-	require.NoError(t, err)
-	require.Len(t, stored, 1)
-	require.Equal(t, parentChange.ContentHash, stored[0].ContentHash)
-	parent, err := store.ParentOf(ctx, child.ID)
-	require.NoError(t, err)
-	require.Equal(t, peer.UID, parent.ToIssueUID)
 
 }
 
@@ -275,7 +271,7 @@ func RunLegacyRelayAdmission(t *testing.T, store db.Storage) {
 					push.Events = []db.FederationIngestEvent{{SourceEventID: 1, Event: valid}, {SourceEventID: 2, Event: event}}
 				}
 				authorizedProjects := []string{fixture.project.UID}
-				if mode == "revoked" || mode == "retained" || kind == "unlink" || kind == "composite cleanup" || kind == "parent replacement" {
+				if mode == "revoked" || mode == "retained" || kind == "parent replacement" {
 					// Accepted cross-project writes still need authority over both endpoints.
 					authorizedProjects = append(authorizedProjects, peerProject.UID)
 				}

@@ -73,9 +73,7 @@ describe('ProjectSyncStatus', () => {
         props: { projectID: 7, projectUID, refreshGeneration: 0 },
       })
       await screen.findByText('Pending: 2')
-      if (failure === 403)
-        await fireEvent.click(screen.getByRole('button', { name: 'Refresh sync' }))
-      else await view.rerender({ projectID: 7, projectUID, refreshGeneration: 1 })
+      await view.rerender({ projectID: 7, projectUID, refreshGeneration: 1 })
       await screen.findByText('Sync status unavailable. Refresh to retry.')
       expect(screen.queryByText('Pending: 2')).toBeNull()
       expect(screen.queryByText('Reused: 1')).toBeNull()

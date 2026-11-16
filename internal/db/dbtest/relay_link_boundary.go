@@ -143,7 +143,7 @@ func RunRelayLinkBoundaryKeepsSameProjectEffects(t *testing.T, store db.Storage)
 // link is refused. After the last grant is revoked the link is allowed, and a
 // legacy peer's unlink of it is applied, so the hub does not keep an edge its
 // replicas removed.
-func RunRelayLinkBoundaryFollowsActiveGrants(t *testing.T, store db.Storage, backend Backend) {
+func RunRelayLinkBoundaryFollowsActiveGrants(t *testing.T, store db.Storage) {
 	ctx := t.Context()
 	fixture := newRelayLinkBoundaryFixture(t, store, "boundary-grants")
 	peerInstanceUID, err := uid.New()
@@ -179,9 +179,9 @@ func RunRelayLinkBoundaryFollowsActiveGrants(t *testing.T, store db.Storage, bac
 	require.NoError(t, store.MaterializeFederatedProject(ctx, fixture.project.ID))
 	require.Empty(t, linkTargetUIDs(t, store, source.ID), "a later group materialization does not bring the removed link back")
 
-	replica := backend.Open(t)
-	t.Cleanup(func() { require.NoError(t, replica.Close()) })
-	grant, err = store.CreateRelayEnrollment(ctx, db.CreateRelayEnrollmentParams{ProjectID: fixture.project.ID, ParentTokenID: fixture.parentTokenID, SpokeInstanceUID: replica.InstanceUID(), ProtocolVersion: db.RelayProtocolVersion, ServeDownstream: true})
+	replica, err := uid.New()
+	require.NoError(t, err)
+	grant, err = store.CreateRelayEnrollment(ctx, db.CreateRelayEnrollmentParams{ProjectID: fixture.project.ID, ParentTokenID: fixture.parentTokenID, SpokeInstanceUID: replica, ProtocolVersion: db.RelayProtocolVersion, ServeDownstream: true})
 	require.NoError(t, err)
 	_, _, err = store.CreateLinkAndEvent(ctx, db.CreateLinkParams{FromIssueID: source.ID, ToIssueID: target.ID, Type: "blocks", Author: "member"}, linkEvent)
 	require.NoError(t, err)

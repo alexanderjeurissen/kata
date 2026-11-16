@@ -72,7 +72,7 @@ func TestStripCrossProjectLinkAdditionsFoldsMixedLinksChanged(t *testing.T) {
 		`"blocked_by_added_uids":["`+sameBlockedBy+`","`+foreignBlkBy+`"],`+
 		`"related_added_uids":["`+sameRelated+`","`+foreignRel+`"]}`)
 
-	stripped, keep, err := db.StripCrossProjectLinkAdditions(changed, db.RelayLinkPolicy{CrossProject: crossProject})
+	stripped, keep, err := db.StripCrossProjectLinkAdditions(changed, db.RelayLinkPolicy{CrossProject: crossProject, SameRoot: func(string) bool { return false }})
 	require.NoError(t, err)
 	require.True(t, keep, "a links_changed with same-project effects stays in the fold")
 	projection := db.FoldEvents(append(history, stripped))
