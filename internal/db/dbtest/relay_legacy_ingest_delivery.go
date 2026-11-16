@@ -40,7 +40,6 @@ func RunRelayCrossProjectRemoval(t *testing.T, store db.Storage) {
 	_, err = store.AcceptRelayDeliveries(db.WithRootAttribution(ctx, fixture.signer, "relay-member"), grant.Enrollment.RelayBindingUID, db.RelayBatch{Stream: db.RelayStreamEvent, Envelopes: []db.RelayEnvelope{envelope}})
 	require.NoError(t, err)
 	require.Equal(t, []string{peer.UID}, linkTargetUIDs(t, store, child.ID))
-
 }
 
 // RunRelayOffersLegacyIngestedEvents covers a direct spoke's creation followed

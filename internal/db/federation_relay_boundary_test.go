@@ -43,22 +43,23 @@ func TestRelayEventPeerProjects(t *testing.T) {
 		related, issue      *string
 		want                map[string]bool
 	}{
-		{"comment related issue", "issue.commented", `{"comment_uid":"` + commentUID + `","reply_to_uid":"00000000000000000000000003","reply_kind":"reply"}`, &related, nil, map[string]bool{"peer": true}},
+		{"comment related issue", "issue.commented", `{"comment_uid":"` + commentUID + `","reply_to_uid":"00000000000000000000000003","reply_kind":"reply"}`, &related, nil, map[string]bool{"peer": false}},
 		{"created", "issue.created", `{"links":[{"to_issue_uid":"` + issueUID + `"}]}`, nil, nil, map[string]bool{"peer": true}},
-		{"comment reply", "issue.commented", `{"reply_to_uid":"` + commentUID + `","reply_kind":"reply"}`, nil, nil, map[string]bool{"peer": true}},
+		{"unresolved link", "issue.created", `{"links":[{"to_issue_uid":"00000000000000000000000003"}]}`, nil, nil, map[string]bool{"": true}},
+		{"comment reply", "issue.commented", `{"reply_to_uid":"` + commentUID + `","reply_kind":"reply"}`, nil, nil, map[string]bool{"peer": false}},
 		{"missing comment reply", "issue.commented", `{"reply_to_uid":"00000000000000000000000003","reply_kind":"reply"}`, nil, nil, map[string]bool{}},
-		{"snapshot null links before reply", "issue.snapshot", `{"links":null,"comments":[{"reply_to_uid":"` + commentUID + `","reply_kind":"reply"}]}`, nil, nil, map[string]bool{"peer": true}},
-		{"close legacy parent before evidence", "issue.closed", `{"parent_short_id":"old1","evidence":[{"type":"duplicate-of","issue_ref":"` + issueUID + `"}]}`, nil, nil, map[string]bool{"peer": true}},
-		{"metadata notification", "issue.created", `{"metadata":{"` + notification.MetadataKey("recipient") + `":{"re":"` + commentUID + `"}}}`, nil, nil, map[string]bool{"peer": true}},
-		{"diff notification", "issue.metadata_updated", `{"diff":{"` + notification.MetadataKey("recipient") + `":{"from":{},"to":{"re":"` + commentUID + `"}}}}`, nil, nil, map[string]bool{"peer": true}},
+		{"snapshot null links before reply", "issue.snapshot", `{"links":null,"comments":[{"reply_to_uid":"` + commentUID + `","reply_kind":"reply"}]}`, nil, nil, map[string]bool{"peer": false}},
+		{"close legacy parent before evidence", "issue.closed", `{"parent_short_id":"old1","evidence":[{"type":"duplicate-of","issue_ref":"` + issueUID + `"}]}`, nil, nil, map[string]bool{"peer": false}},
+		{"metadata notification", "issue.created", `{"metadata":{"` + notification.MetadataKey("recipient") + `":{"re":"` + commentUID + `"}}}`, nil, nil, map[string]bool{"peer": false}},
+		{"diff notification", "issue.metadata_updated", `{"diff":{"` + notification.MetadataKey("recipient") + `":{"from":{},"to":{"re":"` + commentUID + `"}}}}`, nil, nil, map[string]bool{"peer": false}},
 		{"link added", "issue.linked", `{"from_uid":"` + ownIssueUID + `","to_uid":"` + otherIssueUID + `"}`, nil, &ownIssue, map[string]bool{"own": true, "other": true}},
 		{"link removed", "issue.unlinked", `{"from_uid":"` + ownIssueUID + `","to_uid":"` + otherIssueUID + `"}`, nil, &ownIssue, map[string]bool{"own": true, "other": true}},
-		{"subject belongs to peer", "issue.updated", `{}`, nil, &related, map[string]bool{"peer": true}},
+		{"subject belongs to peer", "issue.updated", `{}`, nil, &related, map[string]bool{"peer": false}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			projects := map[string]bool{}
-			err := RelayEventPeerProjects(RemoteEvent{ProjectUID: "own", Type: tc.kind, Payload: jsontext.Value(tc.payload), RelatedIssueUID: tc.related, IssueUID: tc.issue}, lookup, func(uid string, _ bool) error { projects[uid] = true; return nil })
+			err := RelayEventPeerProjects(RemoteEvent{ProjectUID: "own", Type: tc.kind, Payload: jsontext.Value(tc.payload), RelatedIssueUID: tc.related, IssueUID: tc.issue}, lookup, func(uid string, link bool) error { projects[uid] = link; return nil })
 			require.NoError(t, err)
 			require.Equal(t, tc.want, projects)
 		})

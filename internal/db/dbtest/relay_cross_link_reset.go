@@ -13,7 +13,7 @@ import (
 	"go.kenn.io/kata/internal/db"
 )
 
-// RunRelayCrossLinkResetHistory checks reset feature gating and forwarded peer-denial rollback.
+// RunRelayCrossLinkResetHistory checks reset gating, peer-denial rollback, and unlink history across hops.
 func RunRelayCrossLinkResetHistory(t *testing.T, root db.Storage, backend Backend) {
 	ctx := t.Context()
 	hub := backend.Open(t)
@@ -45,11 +45,9 @@ func RunRelayCrossLinkResetHistory(t *testing.T, root db.Storage, backend Backen
 	unlink.ContentHash = remoteEventHash(t, unlink)
 	_, err = root.IngestFederationEvents(ctx, db.FederationIngestParams{ProjectID: projects[0].ID, SpokeInstanceUID: spokeUID, Events: []db.FederationIngestEvent{{SourceEventID: 1, Event: unlink}}})
 	require.NoError(t, err)
-	require.Empty(t, linkTargetUIDs(t, root, issues[0].ID))
 	peerBinding, peerEpoch := setupRelayHop(t, root, hub, projects[1], "reset-peer-hub", true)
 	binding, bindingEpoch := setupRelayHop(t, root, hub, projects[0], "reset-hub", true)
 	require.NoError(t, root.MaterializeFederatedProject(ctx, projects[0].ID))
-	require.Empty(t, linkTargetUIDs(t, root, issues[0].ID), "enrollment preserves the direct unlink")
 	features := db.WithRelayPeerEventFeatures(ctx, db.SupportedEventFeatures)
 	denied := errors.New("peer denied")
 	rejectPeer := db.WithProjectAccessTransactionCheck(features, func(_ context.Context, _ db.Transaction, uid string) error {

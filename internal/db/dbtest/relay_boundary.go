@@ -12,8 +12,34 @@ import (
 // RunRelayCrossProjectBoundary exercises relay cross project boundary on the supplied native store.
 // R6: new relay admission refuses existing cross-project links, and a shared
 // project cannot serialize private endpoints via link or create-with-link.
-func RunRelayCrossProjectBoundary(t *testing.T, store db.Storage) {
+func RunRelayCrossProjectBoundary(t *testing.T, store db.Storage, backend Backend) {
 	ctx := t.Context()
+	fixture := NewRelaySharedAccessFixture(t, store)
+	replica := backend.Open(t)
+	t.Cleanup(func() { require.NoError(t, replica.Close()) })
+	features := db.WithRelayPeerEventFeatures(ctx, db.SupportedEventFeatures)
+	peerBinding, peerEpoch := setupRelayHop(t, store, replica, fixture.Projects[1], "boundary-peer", false)
+	sourceBinding, sourceEpoch := setupRelayHop(t, store, replica, fixture.Projects[0], "boundary-source", true)
+	syncRelayHop(features, t, store, replica, peerBinding, peerEpoch, db.RelayStreamEvent, db.RelayStreamReceipt, db.RelayStreamArtifact)
+	syncRelayHop(features, t, store, replica, sourceBinding, sourceEpoch, db.RelayStreamEvent, db.RelayStreamReceipt, db.RelayStreamArtifact)
+	replicaSource, err := replica.ProjectByUID(ctx, fixture.Projects[0].UID)
+	require.NoError(t, err)
+	replicaIssue, err := replica.IssueByUID(ctx, fixture.Issues[0].UID, db.IncludeDeletedYes)
+	require.NoError(t, err)
+	require.Equal(t, []string{fixture.Issues[1].UID}, linkTargetUIDs(t, replica, replicaIssue.ID))
+	binding, err := replica.FederationBindingByProject(ctx, replicaSource.ID)
+	require.NoError(t, err)
+	require.NotNil(t, binding.RelayConfig)
+	restored := *binding.RelayConfig
+	revoked := restored
+	revoked.UpstreamRevoked = true
+	binding, err = replica.SetRelayBindingConfig(ctx, replicaSource.ID, revoked, restored)
+	require.NoError(t, err)
+	require.True(t, binding.RelayConfig.UpstreamRevoked)
+	binding, err = replica.SetRelayBindingConfig(ctx, replicaSource.ID, restored, revoked)
+	require.NoError(t, err)
+	require.False(t, binding.RelayConfig.UpstreamRevoked)
+
 	first, err := store.CreateProject(ctx, "first-project")
 	require.NoError(t, err)
 	second, err := store.CreateProject(ctx, "second-project")
