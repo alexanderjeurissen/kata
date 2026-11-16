@@ -11,6 +11,7 @@ import (
 
 // RelayEventPeerProjects resolves the projects named by a source event.
 // The lookup must use an unrestricted project context on the held transaction.
+// An empty UID passed to visit identifies an unresolved link endpoint.
 func RelayEventPeerProjects(event RemoteEvent, lookup *EventIssueLookup, visit func(string) error) error {
 	add := func(issue Issue, err error) (bool, error) {
 		if errors.Is(err, ErrNotFound) {
@@ -29,6 +30,16 @@ func RelayEventPeerProjects(event RemoteEvent, lookup *EventIssueLookup, visit f
 			return false, nil
 		}
 		issue, err := lookup.IssueByUID(uid)
+		return add(issue, err)
+	}
+	linkUID := func(uid string) (bool, error) {
+		if uid == "" {
+			return false, nil
+		}
+		issue, err := lookup.IssueByUID(uid)
+		if errors.Is(err, ErrNotFound) || (err == nil && issue.ProjectUID == "") {
+			return false, visit("")
+		}
 		return add(issue, err)
 	}
 	issueRef := func(ref string) (bool, error) {
@@ -69,7 +80,7 @@ func RelayEventPeerProjects(event RemoteEvent, lookup *EventIssueLookup, visit f
 			}
 		}
 	}
-	_, err := walkEventProjectReferences(Event{ProjectUID: event.ProjectUID, RelatedIssueUID: event.RelatedIssueUID, Type: event.Type, Payload: string(event.Payload)}, issueUID, issueRef, comment, project)
+	_, err := walkEventProjectReferences(Event{ProjectUID: event.ProjectUID, RelatedIssueUID: event.RelatedIssueUID, Type: event.Type, Payload: string(event.Payload)}, issueUID, linkUID, issueRef, comment, project)
 	if err != nil {
 		return err
 	}
@@ -104,6 +115,9 @@ func AuthorizeRelayReleasePrefix(ctx context.Context, tx Transaction, lookup *Ev
 			if err := RequireEventFeatures(RelayPeerEventFeatures(ctx), RelayCrossLinksEventFeature); err != nil {
 				return err
 			}
+		}
+		if uid == "" {
+			return nil
 		}
 		if seen[uid] {
 			return nil

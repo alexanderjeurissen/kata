@@ -162,6 +162,10 @@ var storageScenarios = []scenario{
 		RunRelayArchivedPeerEventRelease(t, backend)
 		return nil
 	}},
+	{name: "relay unresolved link features", runWithBackend: func(t *testing.T, store db.Storage, backend Backend) error {
+		RunRelayUnresolvedLinkFeatures(t, store, backend)
+		return nil
+	}},
 	{name: "relay event release peer access", run: func(t *testing.T, store db.Storage) error {
 		RunRelayEventReleasePeerAccess(t, store)
 		return nil

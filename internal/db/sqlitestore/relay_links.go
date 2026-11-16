@@ -6,6 +6,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"slices"
 
 	"go.kenn.io/kata/internal/db"
 )
@@ -188,6 +189,9 @@ func filterRelayCrossProjectLinkEvents(
 	classifier, err := loadRelayOriginClassifier(ctx, tx, projectIDs)
 	if err != nil {
 		return nil, classifier, err
+	}
+	if !slices.ContainsFunc(events, classifier.relaySourced) {
+		return events, classifier, nil
 	}
 	issueProjects, err := relayLinkEndpointProjects(ctx, tx, events)
 	if err != nil {

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 
 	"go.kenn.io/kata/internal/db"
 )
@@ -186,6 +187,9 @@ func filterRelayCrossProjectLinkEvents(
 	classifier, err := loadRelayOriginClassifier(ctx, tx, projectIDs)
 	if err != nil {
 		return nil, err
+	}
+	if !slices.ContainsFunc(events, classifier.relaySourced) {
+		return events, nil
 	}
 	issueProjects, err := relayLinkEndpointProjects(ctx, tx, events)
 	if err != nil {

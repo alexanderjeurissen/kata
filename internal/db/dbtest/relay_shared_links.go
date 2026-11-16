@@ -220,3 +220,50 @@ func NewRelaySharedAccessFixture(t *testing.T, store db.Storage) RelaySharedAcce
 
 	return RelaySharedAccessFixture{Projects: projects, Issues: issues, Grant: grant, Team: team, Signer: db.RootAttributionSigner{AuthorityUID: store.InstanceUID(), PrivateKey: private}}
 }
+
+// RunRelayUnresolvedLinkFeatures checks version negotiation when a hub has not
+// received the linked issue's project yet.
+func RunRelayUnresolvedLinkFeatures(t *testing.T, root db.Storage, backend Backend) {
+	ctx := t.Context()
+	features := db.WithRelayPeerEventFeatures(ctx, db.SupportedEventFeatures)
+	hub := backend.Open(t)
+	t.Cleanup(func() { require.NoError(t, hub.Close()) })
+	leaf := backend.Open(t)
+	t.Cleanup(func() { require.NoError(t, leaf.Close()) })
+	fixture := NewRelaySharedAccessFixture(t, root)
+	upstream, upstreamEpoch := setupRelayHop(t, root, hub, fixture.Projects[0], "unresolved-hub", true)
+	syncRelayHop(features, t, root, hub, upstream, upstreamEpoch, db.RelayStreamEvent, db.RelayStreamReceipt)
+	hubProject, err := hub.ProjectByUID(ctx, fixture.Projects[0].UID)
+	require.NoError(t, err)
+	downstream, epoch := setupRelayHop(t, hub, leaf, hubProject, "unresolved-leaf", false)
+
+	// Earlier ordinary events may be offered as a prefix. The link must stop
+	// an old peer before the missing endpoint's project reaches this hub.
+	for {
+		items, err := hub.PendingRelayDeliveries(ctx, downstream, db.RelayStreamEvent, 100)
+		if err != nil {
+			require.ErrorIs(t, err, db.ErrUnsupportedEventFeatures)
+			break
+		}
+		require.NotEmpty(t, items)
+		last := items[len(items)-1]
+		require.NoError(t, hub.AckRelayDeliveries(ctx, downstream, epoch, db.RelayStreamEvent, last.Sequence, last.Digest))
+	}
+	items, err := hub.PendingRelayDeliveries(features, downstream, db.RelayStreamEvent, 100)
+	require.NoError(t, err)
+	require.NotEmpty(t, items)
+	syncRelayHop(features, t, hub, nil, downstream, epoch, db.RelayStreamEvent, db.RelayStreamReceipt, db.RelayStreamArtifact)
+
+	rootReset := root.(db.RelayResetStore)
+	checkpoint, err := rootReset.CreateRelayReset(features, upstream, fixture.Signer)
+	require.NoError(t, err)
+	hubReset := hub.(db.RelayResetStore)
+	require.NoError(t, hubReset.InstallRelayReset(ctx, upstream, checkpoint.Manifest, checkpoint.Snapshot, checkpoint.Translation))
+	forwarded, err := hubReset.CreateRelayReset(features, downstream, db.RootAttributionSigner{})
+	require.NoError(t, err)
+	_, err = hubReset.CreateRelayReset(ctx, downstream, db.RootAttributionSigner{})
+	require.ErrorIs(t, err, db.ErrUnsupportedEventFeatures)
+	retry, err := hubReset.CreateRelayReset(features, downstream, db.RootAttributionSigner{})
+	require.NoError(t, err)
+	require.Equal(t, forwarded, retry)
+}
