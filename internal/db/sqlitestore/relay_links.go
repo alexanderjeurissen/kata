@@ -206,8 +206,17 @@ func filterRelayLinkEvents(ctx context.Context, tx *sql.Tx, events []db.FoldEven
 			}
 			var sourceID, peerID int64
 			lookupErr = tx.QueryRowContext(ctx, `SELECT id FROM projects WHERE uid=? AND deleted_at IS NULL`, event.ProjectUID).Scan(&sourceID)
+			if errors.Is(lookupErr, sql.ErrNoRows) {
+				lookupErr = nil
+				return true
+			}
 			if lookupErr == nil {
 				lookupErr = tx.QueryRowContext(ctx, `SELECT id FROM projects WHERE uid=? AND deleted_at IS NULL`, peer).Scan(&peerID)
+				if errors.Is(lookupErr, sql.ErrNoRows) {
+					lookupErr = nil
+					shared[peer] = false
+					return true
+				}
 			}
 			var allowed bool
 			if lookupErr == nil {

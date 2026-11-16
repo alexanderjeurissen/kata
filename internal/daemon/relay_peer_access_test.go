@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kata/internal/config"
 	"go.kenn.io/kata/internal/daemon"
@@ -22,11 +23,23 @@ type relayPeerHost struct {
 	mode     string
 	requests []daemon.HostFederationAccessRequest
 	cleaned  int
+	attempts int
 }
 
 func (h *relayPeerHost) AuthorizeFederation(_ context.Context, request daemon.HostFederationAccessRequest) (daemon.HostFederationAccessDecision, error) {
 	h.requests = append(h.requests, request)
 	if request.Project.UID == h.peer {
+		if h.mode == "transient" {
+			h.attempts++
+			if h.attempts == 1 {
+				return daemon.HostFederationAccessDecision{TransactionFence: func(context.Context, db.Transaction) error {
+					return db.AfterTransactionRollback(&pgconn.PgError{Code: "40001"}, func(context.Context) error {
+						h.cleaned++
+						return errors.New("cleanup failed")
+					})
+				}}, nil
+			}
+		}
 		switch h.mode {
 		case "denied":
 			return daemon.HostFederationAccessDecision{}, daemon.ErrHostAccessDenied
@@ -92,6 +105,13 @@ func TestRelayPeerAccessHTTP(t *testing.T) {
 		_, _, err = store.SetProjectAccessPolicy(t.Context(), db.ProjectAccessPolicy{ProjectUID: fixture.Projects[1].UID, Visibility: "teams", TeamUIDs: []string{fixture.Team.UID}}, "admin")
 		require.NoError(t, err)
 		for _, path := range []string{"?stream=events", "/reset"} {
+			host.mode = "transient"
+			host.attempts = 0
+			before := host.cleaned
+			status, raw := request(path)
+			require.Equal(t, 503, status, string(raw))
+			require.Equal(t, 1, host.attempts)
+			require.Equal(t, before+1, host.cleaned)
 			for _, tc := range []struct {
 				mode   string
 				status int
@@ -115,12 +135,12 @@ func TestRelayPeerAccessHTTP(t *testing.T) {
 			}
 			host.mode = "allow"
 			scoped = true
-			status, raw := request(path)
+			status, raw = request(path)
 			require.Equal(t, 404, status, string(raw))
 			scoped = false
 			status, raw = request(path)
 			require.Equal(t, 200, status, string(raw))
 		}
-		require.Equal(t, 4, host.cleaned)
+		require.Equal(t, 6, host.cleaned)
 	})
 }
