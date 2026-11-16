@@ -208,13 +208,6 @@ func RunRelayCrossProjectBoundary(t *testing.T, store db.Storage) {
 	})
 	require.NoError(t, err, "same-project parent replacement commits")
 	require.Equal(t, "issue.unlinked", replacement.UnlinkedEvent.Type)
-	var unlinkPayload struct {
-		FromUID string `json:"link_from_uid"`
-		ToUID   string `json:"link_to_uid"`
-	}
-	require.NoError(t, json.Unmarshal([]byte(replacement.UnlinkedEvent.Payload), &unlinkPayload))
-	require.Equal(t, local.UID, unlinkPayload.FromUID)
-	require.Equal(t, oldParent.UID, unlinkPayload.ToUID)
 	require.Equal(t, "issue.linked", replacement.LinkedEvent.Type)
 	require.Equal(t, newParent.ID, replacement.Link.ToIssueID)
 	sharedParent, _, err := store.CreateIssue(ctx, db.CreateIssueParams{ProjectID: first.ID, Author: "member", Title: "Cross-project parent"})

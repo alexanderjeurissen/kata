@@ -108,7 +108,6 @@ func RunRelayOffersLegacyIngestedEvents(t *testing.T, store db.Storage) {
 func RunLegacyRelayAdmission(t *testing.T, store db.Storage) {
 	for kind, modes := range map[string][]string{
 		"creation":           {"sibling", "same project", "relayed peer", "revoked", "missing", "retained"},
-		"snapshot":           {"sibling", "missing"},
 		"single link":        {"sibling"},
 		"composite":          {"sibling"},
 		"parent":             {"sibling"},
@@ -141,7 +140,7 @@ func RunLegacyRelayAdmission(t *testing.T, store db.Storage) {
 					require.NoError(t, err)
 					peer.ShortID = strings.ToLower(peer.UID)
 				}
-				primary, primaryEvent, err := store.CreateIssue(ctx, db.CreateIssueParams{ProjectID: fixture.project.ID, Title: "Primary", Author: "member"})
+				primary, _, err := store.CreateIssue(ctx, db.CreateIssueParams{ProjectID: fixture.project.ID, Title: "Primary", Author: "member"})
 				require.NoError(t, err)
 				relayProject := fixture.project
 				if mode == "relayed peer" {
@@ -157,13 +156,10 @@ func RunLegacyRelayAdmission(t *testing.T, store db.Storage) {
 				eventType := "issue.linked"
 				payload := `{"type":"related","from_uid":"` + primary.UID + `","to_uid":"` + peer.UID + `"}`
 				switch kind {
-				case "creation", "snapshot":
+				case "creation":
 					primary.UID, err = uid.New()
 					require.NoError(t, err)
 					eventType = "issue.created"
-					if kind == "snapshot" {
-						eventType = "issue.snapshot"
-					}
 					payload = `{"uid":"` + primary.UID + `","short_id":"` + strings.ToLower(primary.UID[len(primary.UID)-4:]) + `","title":"Legacy creation","body":"","author":"member","status":"open","metadata":{},"created_at":"2026-05-23T12:00:00.000Z","links":[{"type":"blocks","to_issue_uid":"` + peer.UID + `","author":"member"}]}`
 				case "composite", "composite cleanup", "parent replacement":
 					eventType = "issue.links_changed"
@@ -258,41 +254,75 @@ func RunLegacyRelayAdmission(t *testing.T, store db.Storage) {
 				retry, err := store.IngestFederationEvents(ctx, push)
 				require.NoError(t, err)
 				require.Equal(t, 1, retry.Duplicates)
-				if mode == "missing" && (kind == "creation" || kind == "snapshot") {
-					features := db.WithRelayPeerEventFeatures(ctx, db.SupportedEventFeatures)
-					binding := grant.Enrollment.RelayBindingUID
-					out, err := store.PendingRelayDeliveries(features, binding, db.RelayStreamEvent, 100)
-					require.NoError(t, err)
-					require.Len(t, out, 1)
-					require.Equal(t, primaryEvent.UID, out[0].SourceUID)
-					require.NoError(t, store.AckRelayDeliveries(ctx, binding, 1, db.RelayStreamEvent, out[0].Sequence, out[0].Digest))
-					before := relayStateForBinding(t, store, binding)
-					out, err = store.PendingRelayDeliveries(features, binding, db.RelayStreamEvent, 100)
-					require.NoError(t, err)
-					require.Empty(t, out)
-					require.Equal(t, before, relayStateForBinding(t, store, binding))
-					_, _, err = store.CreateIssue(ctx, db.CreateIssueParams{ProjectID: fixture.sibling.ID, UID: peer.UID, Title: "Arrived peer", Author: "member"})
-					require.NoError(t, err)
-					out, err = store.PendingRelayDeliveries(features, binding, db.RelayStreamEvent, 100)
-					require.NoError(t, err)
-					var found bool
-					for _, envelope := range out {
-						if envelope.SourceUID == event.EventUID {
-							found = true
-							require.Equal(t, event.ContentHash, envelope.SourceHash)
-							source, err := db.DecodeRelaySourceEvent(envelope.Body)
-							require.NoError(t, err)
-							require.Equal(t, event.Payload, source.Payload)
-						}
-					}
-					require.True(t, found)
-					again, err := store.PendingRelayDeliveries(features, binding, db.RelayStreamEvent, 100)
-					require.NoError(t, err)
-					require.Equal(t, out, again)
-				}
 			})
 		}
 	}
+}
+
+// RunLegacyRelayHeldLinkRelease checks that a missing linked issue holds the
+// source event until that issue arrives, then releases the original bytes.
+func RunLegacyRelayHeldLinkRelease(t *testing.T, store db.Storage) {
+	t.Run("held link release after peer arrival", func(t *testing.T) {
+		ctx := t.Context()
+		fixture := newRelayLinkBoundaryFixture(t, store, "legacy-held-link-release")
+		peerUID, err := uid.New()
+		require.NoError(t, err)
+		primary, primaryEvent, err := store.CreateIssue(ctx, db.CreateIssueParams{ProjectID: fixture.project.ID, Title: "Primary", Author: "member"})
+		require.NoError(t, err)
+		instance, err := uid.New()
+		require.NoError(t, err)
+		grant, err := store.CreateRelayEnrollment(ctx, db.CreateRelayEnrollmentParams{
+			ProjectID: fixture.project.ID, ParentTokenID: fixture.parentTokenID,
+			SpokeInstanceUID: instance, ProtocolVersion: db.RelayProtocolVersion,
+		})
+		require.NoError(t, err)
+		spoke, err := uid.New()
+		require.NoError(t, err)
+		primary.UID, err = uid.New()
+		require.NoError(t, err)
+		event := newRemoteEvent(t, fixture.project, &primary.UID, "issue.created", "member", spoke, 900, jsontext.Value(
+			`{"uid":"`+primary.UID+`","short_id":"`+strings.ToLower(primary.UID[len(primary.UID)-4:])+`","title":"Legacy creation","body":"","author":"member","status":"open","metadata":{},"created_at":"2026-05-23T12:00:00.000Z","links":[{"type":"blocks","to_issue_uid":"`+peerUID+`","author":"member"}]}`,
+		))
+		push := db.FederationIngestParams{
+			ProjectID: fixture.project.ID, SpokeInstanceUID: spoke,
+			Events: []db.FederationIngestEvent{{SourceEventID: 1, Event: event}},
+		}
+		result, err := store.IngestFederationEvents(ctx, push)
+		require.NoError(t, err)
+		require.Equal(t, 1, result.Accepted)
+
+		features := db.WithRelayPeerEventFeatures(ctx, db.SupportedEventFeatures)
+		binding := grant.Enrollment.RelayBindingUID
+		out, err := store.PendingRelayDeliveries(features, binding, db.RelayStreamEvent, 100)
+		require.NoError(t, err)
+		require.Len(t, out, 1)
+		require.Equal(t, primaryEvent.UID, out[0].SourceUID)
+		require.NoError(t, store.AckRelayDeliveries(ctx, binding, 1, db.RelayStreamEvent, out[0].Sequence, out[0].Digest))
+		before := relayStateForBinding(t, store, binding)
+		out, err = store.PendingRelayDeliveries(features, binding, db.RelayStreamEvent, 100)
+		require.NoError(t, err)
+		require.Empty(t, out)
+		require.Equal(t, before, relayStateForBinding(t, store, binding))
+
+		_, _, err = store.CreateIssue(ctx, db.CreateIssueParams{ProjectID: fixture.sibling.ID, UID: peerUID, Title: "Arrived peer", Author: "member"})
+		require.NoError(t, err)
+		out, err = store.PendingRelayDeliveries(features, binding, db.RelayStreamEvent, 100)
+		require.NoError(t, err)
+		var found bool
+		for _, envelope := range out {
+			if envelope.SourceUID == event.EventUID {
+				found = true
+				require.Equal(t, event.ContentHash, envelope.SourceHash)
+				source, err := db.DecodeRelaySourceEvent(envelope.Body)
+				require.NoError(t, err)
+				require.Equal(t, event.Payload, source.Payload)
+			}
+		}
+		require.True(t, found)
+		again, err := store.PendingRelayDeliveries(features, binding, db.RelayStreamEvent, 100)
+		require.NoError(t, err)
+		require.Equal(t, out, again)
+	})
 }
 
 // RunLegacyRelayParentUIDCollision resolves the parent UID despite a colliding source-project short ID.

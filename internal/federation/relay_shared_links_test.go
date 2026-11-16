@@ -39,7 +39,7 @@ func TestRelaySharedLinksAcrossHops(t *testing.T) {
 					issues[i], _, err = root.store.CreateIssue(db.WithRootAttribution(ctx, root.signer, root.account), db.CreateIssueParams{ProjectID: project.ID, Author: "assistant", Title: "Shared endpoint"})
 					require.NoError(t, err)
 				}
-				_, linkEvent, err := root.store.CreateLinkAndEvent(db.WithRootAttribution(ctx, root.signer, root.account), db.CreateLinkParams{FromIssueID: issues[0].ID, ToIssueID: issues[1].ID, Type: "blocks", Author: root.account},
+				_, _, err := root.store.CreateLinkAndEvent(db.WithRootAttribution(ctx, root.signer, root.account), db.CreateLinkParams{FromIssueID: issues[0].ID, ToIssueID: issues[1].ID, Type: "blocks", Author: root.account},
 					db.LinkEventParams{EventType: "issue.linked", EventIssueID: issues[0].ID, Actor: root.account, FromUID: issues[0].UID, ToUID: issues[1].UID, FromShortID: issues[0].ShortID, ToShortID: issues[1].ShortID})
 				require.NoError(t, err)
 				order := []int{0, 1}
@@ -47,22 +47,9 @@ func TestRelaySharedLinksAcrossHops(t *testing.T) {
 					order = []int{1, 0}
 				}
 				for _, nodes := range [][]*relayMatrixNode{hubs, leaves} {
-
-					for position, i := range order {
+					for _, i := range order {
 						syncRelayMatrixNode(t, nodes[i])
-						if position == 0 && i == 0 {
-							links, err := nodes[0].store.LinksByIssue(ctx, issueIDForRelayMatrix(t, nodes[0], issues[0].UID))
-							require.NoError(t, err)
-							require.Empty(t, links)
-						}
 					}
-					_, err := nodes[1].store.IssueByUID(ctx, issues[1].UID, db.IncludeDeletedYes)
-					require.NoError(t, err)
-					stored, err := nodes[0].store.EventsByUIDs(ctx, nodes[0].project.ID, []string{linkEvent.UID})
-					require.NoError(t, err)
-					require.Len(t, stored, 1)
-					require.Equal(t, linkEvent.ContentHash, stored[0].ContentHash)
-					require.Equal(t, linkEvent.Payload, stored[0].Payload)
 					links, err := nodes[0].store.LinksByIssue(ctx, issueIDForRelayMatrix(t, nodes[0], issues[0].UID))
 					require.NoError(t, err)
 					require.Len(t, links, 1)

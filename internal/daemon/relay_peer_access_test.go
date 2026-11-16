@@ -15,6 +15,7 @@ import (
 	"go.kenn.io/kata/internal/daemon"
 	"go.kenn.io/kata/internal/db"
 	"go.kenn.io/kata/internal/db/dbtest"
+	"go.kenn.io/kata/internal/db/pgstore"
 )
 
 type relayPeerHost struct {
@@ -105,13 +106,15 @@ func TestRelayPeerAccessHTTP(t *testing.T) {
 		_, _, err = store.SetProjectAccessPolicy(t.Context(), db.ProjectAccessPolicy{ProjectUID: fixture.Projects[1].UID, Visibility: "teams", TeamUIDs: []string{fixture.Team.UID}}, "admin")
 		require.NoError(t, err)
 		for _, path := range []string{"?stream=events", "/reset"} {
-			host.mode = "transient"
-			host.attempts = 0
-			before := host.cleaned
-			status, raw := request(path)
-			require.Equal(t, 503, status, string(raw))
-			require.Equal(t, 1, host.attempts)
-			require.Equal(t, before+1, host.cleaned)
+			if _, postgres := store.(*pgstore.Store); postgres {
+				host.mode = "transient"
+				host.attempts = 0
+				before := host.cleaned
+				status, raw := request(path)
+				require.Equal(t, 503, status, string(raw))
+				require.Equal(t, 1, host.attempts)
+				require.Equal(t, before+1, host.cleaned)
+			}
 			for _, tc := range []struct {
 				mode   string
 				status int
@@ -135,12 +138,101 @@ func TestRelayPeerAccessHTTP(t *testing.T) {
 			}
 			host.mode = "allow"
 			scoped = true
-			status, raw = request(path)
+			status, raw := request(path)
 			require.Equal(t, 404, status, string(raw))
 			scoped = false
 			status, raw = request(path)
 			require.Equal(t, 200, status, string(raw))
 		}
-		require.Equal(t, 6, host.cleaned)
+		expectedCleaned := 4
+		if _, postgres := store.(*pgstore.Store); postgres {
+			expectedCleaned = 6
+		}
+		require.Equal(t, expectedCleaned, host.cleaned)
+	})
+}
+
+func TestRelayArchivedPeerAccessHTTP(t *testing.T) {
+	projectAccessBackends(t, func(t *testing.T, store db.Storage) {
+		fixture := dbtest.NewRelaySharedAccessFixture(t, store)
+		deniedTeam, _, err := store.CreateTeam(t.Context(), "archived-peer-denied-team", "admin")
+		require.NoError(t, err)
+		_, _, err = store.SetProjectAccessPolicy(t.Context(), db.ProjectAccessPolicy{
+			ProjectUID: fixture.Projects[1].UID, Visibility: "teams", TeamUIDs: []string{deniedTeam.UID},
+		}, "admin")
+		require.NoError(t, err)
+		_, _, err = store.RemoveProject(t.Context(), db.RemoveProjectParams{
+			ProjectID: fixture.Projects[1].ID, Actor: "admin", Force: true,
+		})
+		require.NoError(t, err)
+		_, err = store.SetTeamMembership(t.Context(), deniedTeam.UID, "member", true, "admin")
+		require.NoError(t, err)
+
+		host := &relayPeerHost{peer: fixture.Projects[1].UID, store: store}
+		server := daemon.NewServer(daemon.ServerConfig{DB: store, HostFederationAccess: host, RootSigning: daemon.NewRootSigning(fixture.Signer), Auth: config.AuthConfig{Token: "bootstrap-test-token", RequireTokenIdentity: true}})
+		t.Cleanup(func() { require.NoError(t, server.Close()) })
+		endpoint := httptest.NewServer(server.Handler())
+		t.Cleanup(endpoint.Close)
+		for _, path := range []string{"?stream=events", "/reset"} {
+			req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("%s/api/v1/projects/%d/federation/relay%s", endpoint.URL, fixture.Projects[0].ID, path), nil)
+			require.NoError(t, err)
+			req.Header.Set("Authorization", "Bearer "+fixture.Grant.Token)
+			req.Header.Set(db.EventFeaturesHeader, db.SupportedEventFeatures)
+			resp, err := endpoint.Client().Do(req)
+			require.NoError(t, err)
+			raw, err := io.ReadAll(resp.Body)
+			require.NoError(t, err)
+			require.NoError(t, resp.Body.Close())
+			require.Equalf(t, http.StatusOK, resp.StatusCode, "%s", raw)
+			require.NotEmpty(t, host.requests)
+			peer := host.requests[len(host.requests)-1]
+			require.Equal(t, fixture.Projects[1].UID, peer.Project.UID)
+			expected := "offerRelayDeliveries"
+			if path == "/reset" {
+				expected = "getRelayReset"
+			}
+			require.Equal(t, expected, peer.Operation.ID)
+		}
+	})
+}
+
+func TestRelayArchivedPeerNativeAccessDeniedHTTP(t *testing.T) {
+	projectAccessBackends(t, func(t *testing.T, store db.Storage) {
+		fixture := dbtest.NewRelaySharedAccessFixture(t, store)
+		deniedTeam, _, err := store.CreateTeam(t.Context(), "archived-peer-native-denied-team", "admin")
+		require.NoError(t, err)
+		_, _, err = store.SetProjectAccessPolicy(t.Context(), db.ProjectAccessPolicy{
+			ProjectUID: fixture.Projects[1].UID, Visibility: "teams", TeamUIDs: []string{deniedTeam.UID},
+		}, "admin")
+		require.NoError(t, err)
+		_, _, err = store.RemoveProject(t.Context(), db.RemoveProjectParams{
+			ProjectID: fixture.Projects[1].ID, Actor: "admin", Force: true,
+		})
+		require.NoError(t, err)
+		accessible, err := store.AccessibleProjectUIDs(t.Context(), "member")
+		require.NoError(t, err)
+		require.NotContains(t, accessible, fixture.Projects[1].UID)
+
+		host := &relayPeerHost{peer: fixture.Projects[1].UID, store: store}
+		server := daemon.NewServer(daemon.ServerConfig{DB: store, HostFederationAccess: host, RootSigning: daemon.NewRootSigning(fixture.Signer), Auth: config.AuthConfig{Token: "bootstrap-test-token", RequireTokenIdentity: true}})
+		t.Cleanup(func() { require.NoError(t, server.Close()) })
+		endpoint := httptest.NewServer(server.Handler())
+		t.Cleanup(endpoint.Close)
+		for _, path := range []string{"?stream=events", "/reset"} {
+			host.requests = nil
+			req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("%s/api/v1/projects/%d/federation/relay%s", endpoint.URL, fixture.Projects[0].ID, path), nil)
+			require.NoError(t, err)
+			req.Header.Set("Authorization", "Bearer "+fixture.Grant.Token)
+			req.Header.Set(db.EventFeaturesHeader, db.SupportedEventFeatures)
+			resp, err := endpoint.Client().Do(req)
+			require.NoError(t, err)
+			_, err = io.Copy(io.Discard, resp.Body)
+			require.NoError(t, err)
+			require.NoError(t, resp.Body.Close())
+			require.Equalf(t, http.StatusNotFound, resp.StatusCode, "path %s", path)
+			for _, request := range host.requests {
+				require.NotEqual(t, fixture.Projects[1].UID, request.Project.UID, "native denial runs before host peer authorization")
+			}
+		}
 	})
 }

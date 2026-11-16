@@ -386,14 +386,13 @@ func purgeCascade(
 		`DELETE FROM events WHERE id IN (SELECT e.id FROM events e WHERE `+eventsWhere+")", eventsArgs...); err != nil {
 		return 0, fmt.Errorf("delete events: %w", err)
 	}
-	// Detach surviving aggregated issue.links_changed events from the
-	// purged issue by clearing only the local FK. The UID is part of the
-	// immutable event envelope and may also be covered by a retained root
-	// receipt, so preserve it as historical evidence.
+	// Detach surviving link-add and aggregated link-change events from the
+	// purged issue by clearing only the local FK. Their portable UIDs and
+	// content hashes remain source history for checkpoint filtering.
 	if _, err := c.ExecContext(ctx,
 		`UPDATE events
 		    SET related_issue_id = NULL
-		  WHERE related_issue_id = ? AND type = 'issue.links_changed'`,
+		  WHERE related_issue_id = ? AND type IN ('issue.linked', 'issue.links_changed')`,
 		issue.ID); err != nil {
 		return 0, fmt.Errorf("detach aggregated event peer refs: %w", err)
 	}
@@ -606,9 +605,8 @@ func lookupIssueIncludingDeleted(ctx context.Context, r sqlReader, issueID int64
 }
 
 // purgeEventsCleanupWhere returns the SQL fragment + bound args that match
-// every event the issue's purge should delete: events whose issue_id IS
-// this issue, plus per-link events (issue.linked / issue.unlinked) whose
-// related_issue_id pointed at this issue.
+// every event the issue's purge should delete: events whose issue_id IS this
+// issue, plus related events other than retained source history.
 //
 // Reply issue.commented events retain their source history and portable target.
 // Aggregated issue.links_changed events are also excluded from the
@@ -622,11 +620,11 @@ func lookupIssueIncludingDeleted(ctx context.Context, r sqlReader, issueID int64
 // was once linked to it; payload-only references and single-peer
 // envelope references are equally protected.
 //
-// Other-issue events that merely reference this issue in their payload
-// (issue.created with an initial-link to this issue, issue.links_changed
-// with this issue in a *_uids slice) are likewise PRESERVED.
+// Root and relay checkpoints filter retained link additions by the purge log.
+// Other-issue events that refer to this issue in payload-only link fields are
+// likewise preserved for that filter.
 func purgeEventsCleanupWhere(issue db.Issue) (string, []any) {
-	clause := `(e.issue_id = ? OR e.issue_uid = ? OR ((e.related_issue_id = ? OR e.related_issue_uid = ?) AND e.type NOT IN ('issue.links_changed', 'issue.commented')))`
+	clause := `(e.issue_id = ? OR e.issue_uid = ? OR ((e.related_issue_id = ? OR e.related_issue_uid = ?) AND e.type NOT IN ('issue.linked', 'issue.links_changed', 'issue.commented')))`
 	args := []any{issue.ID, issue.UID, issue.ID, issue.UID}
 	return clause, args
 }

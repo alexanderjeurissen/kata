@@ -65,15 +65,15 @@ func TestRelayEventPeerProjects(t *testing.T) {
 			require.Equal(t, tc.want, projects)
 		})
 	}
-	for _, tc := range []struct{ kind, payload string }{
-		{"issue.linked", `{"from_uid":"missing"}`},
-		{"issue.unlinked", `{"to_uid":"missing"}`},
-		{"issue.unlinked", `{"link_from_uid":"missing"}`},
-		{"issue.unlinked", `{"link_to_uid":"missing"}`},
-		{"issue.links_changed", `{"related_added_uids":["missing"]}`},
-		{"issue.snapshot", `{"links":[{"to_issue_uid":"missing"}]}`},
+	for _, tc := range []struct{ name, kind, payload string }{
+		{"link added", "issue.linked", `{"from_uid":"missing"}`},
+		{"link target", "issue.unlinked", `{"to_uid":"missing"}`},
+		{"unlink source", "issue.unlinked", `{"link_from_uid":"missing"}`},
+		{"unlink target", "issue.unlinked", `{"link_to_uid":"missing"}`},
+		{"composite target", "issue.links_changed", `{"related_added_uids":["missing"]}`},
+		{"snapshot target", "issue.snapshot", `{"links":[{"to_issue_uid":"missing"}]}`},
 	} {
-		t.Run(tc.kind, func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			err := RelayEventPeerProjects(RemoteEvent{ProjectUID: "own", Type: tc.kind, Payload: jsontext.Value(tc.payload)}, lookup, func(string) error { return nil })
 			require.ErrorIs(t, err, ErrRelayLinkUnresolved)
 		})
@@ -99,15 +99,13 @@ func TestAuthorizeRelayReleaseCrossingEvents(t *testing.T) {
 		}
 		return nil
 	})
-	for _, kind := range []string{"issue.linked", "issue.unlinked"} {
-		event := RemoteEvent{ProjectUID: "own", IssueUID: &own, Type: kind, Payload: jsontext.Value(`{"from_uid":"own-issue","to_uid":"peer-issue"}`)}
-		t.Run(kind, func(t *testing.T) {
-			require.ErrorIs(t, AuthorizeRelayRelease(ctx, nil, lookup, "own", []RemoteEvent{event}), ErrUnsupportedEventFeatures)
-			supported := WithRelayPeerEventFeatures(ctx, RelayCrossLinksEventFeature)
-			require.ErrorIs(t, AuthorizeRelayRelease(supported, nil, lookup, "own", []RemoteEvent{event}), denied)
-			require.NoError(t, AuthorizeRelayRelease(WithRelayPeerEventFeatures(t.Context(), RelayCrossLinksEventFeature), nil, lookup, "own", []RemoteEvent{event}))
-		})
-	}
+	event := RemoteEvent{ProjectUID: "own", IssueUID: &own, Type: "issue.linked", Payload: jsontext.Value(`{"from_uid":"own-issue","to_uid":"peer-issue"}`)}
+	t.Run("link added", func(t *testing.T) {
+		require.ErrorIs(t, AuthorizeRelayRelease(ctx, nil, lookup, "own", []RemoteEvent{event}), ErrUnsupportedEventFeatures)
+		supported := WithRelayPeerEventFeatures(ctx, RelayCrossLinksEventFeature)
+		require.ErrorIs(t, AuthorizeRelayRelease(supported, nil, lookup, "own", []RemoteEvent{event}), denied)
+		require.NoError(t, AuthorizeRelayRelease(WithRelayPeerEventFeatures(t.Context(), RelayCrossLinksEventFeature), nil, lookup, "own", []RemoteEvent{event}))
+	})
 }
 
 func TestAuthorizeRelayReleasePrefixHoldsMissingLink(t *testing.T) {

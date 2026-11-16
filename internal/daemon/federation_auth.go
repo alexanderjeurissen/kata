@@ -271,7 +271,7 @@ func evaluateFederationRequestForCapabilities(
 				return errors.Join(errHostFederationAccessUnavailable, err)
 			}
 			peer, err := cfg.DB.ProjectByUIDTx(db.WithAuthorizedProjects(checkCtx, nil), tx, peerUID)
-			if errors.Is(err, db.ErrNotFound) || (err == nil && peer.DeletedAt != nil) {
+			if errors.Is(err, db.ErrNotFound) {
 				return projectAccessDenied()
 			}
 			if err != nil {
