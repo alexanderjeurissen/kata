@@ -174,20 +174,11 @@ func filterRelayCrossProjectLinkEvents(
 	}
 	filtered := make([]db.FoldEvent, 0, len(events))
 	for _, event := range events {
-		relay := classifier.relaySourced(event)
-		legacyRemoval := !relay && event.OriginInstanceUID != classifier.instanceUID
-		if !relay && !legacyRemoval {
+		if !classifier.relaySourced(event) {
 			filtered = append(filtered, event)
 			continue
 		}
 		policy := authority.Policy(event)
-		policy.AllowAdditions = legacyRemoval
-		if legacyRemoval {
-			crosses := policy.CrossProject
-			policy.CrossProject = func(uid string) bool {
-				return crosses(uid) && (authority.Relayed[event.ProjectUID] || authority.Relayed[authority.Projects[uid]])
-			}
-		}
 		stripped, keep, err := db.StripCrossProjectLinkAdditions(event, policy)
 		if err != nil {
 			return nil, nil, err
@@ -267,8 +258,8 @@ func relayFoldAuthorityTx(ctx context.Context, tx *sql.Tx, owners map[string]str
 		ids[uid], uids[id] = id, uid
 	}
 	for uid, id := range ids {
-		var relayed bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM federation_bindings b WHERE b.project_id=$1 AND (b.relay_config IS NOT NULL OR EXISTS(SELECT 1 FROM federation_enrollments e WHERE e.project_id=b.project_id AND e.relay_protocol_version=1 AND e.revoked_at IS NULL)))`, id).Scan(&relayed); err != nil {
+		relayed, err := relayProjectsActiveTx(ctx, tx, id, id)
+		if err != nil {
 			return a, err
 		}
 		a.Relayed[uid] = relayed

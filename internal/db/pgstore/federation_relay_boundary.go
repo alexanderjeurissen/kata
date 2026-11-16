@@ -258,7 +258,7 @@ func relayEventCrossesProjectTx(ctx context.Context, tx *sql.Tx, projectID int64
 					err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM issues WHERE uid=$1 AND project_id=$2)`, peer, projectID).Scan(&own)
 					return !own, err
 				}
-				err := db.ValidateLegacyRelayAdmission(ctx, event, crosses, func(context.Context, string) (bool, error) { return false, nil }, func(context.Context, string) (bool, error) { return false, nil })
+				err := db.ValidateLegacyRelayAdditions(ctx, event, crosses, func(context.Context, string) (bool, error) { return false, nil }, func(context.Context, string) (bool, error) { return false, nil })
 				if err != nil && !errors.Is(err, db.ErrFederationCrossProjectBoundary) {
 					return false, err
 				}

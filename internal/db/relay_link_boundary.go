@@ -9,10 +9,9 @@ import (
 
 // RelayLinkPolicy decides which cross-project link mutations may be folded.
 type RelayLinkPolicy struct {
-	RootOrigin     bool
-	AllowAdditions bool
-	SameRoot       func(string) bool
-	CrossProject   func(string) bool
+	RootOrigin   bool
+	SameRoot     func(string) bool
+	CrossProject func(string) bool
 }
 
 // RelayLinkAdditionPayload excludes removals from link admission checks.
@@ -29,7 +28,7 @@ func RelayLinkAdditionPayload(event RemoteEvent) map[string]jsontext.Value {
 // StripCrossProjectLinkAdditions excludes links outside the relay's authority.
 func StripCrossProjectLinkAdditions(event FoldEvent, policy RelayLinkPolicy) (FoldEvent, bool, error) {
 	blocked := func(peer string) bool {
-		return !policy.AllowAdditions && policy.CrossProject(peer) && (!policy.RootOrigin || !policy.SameRoot(peer))
+		return policy.CrossProject(peer) && (!policy.RootOrigin || !policy.SameRoot(peer))
 	}
 	blockedRemoval := func(peer string) bool { return !policy.RootOrigin && policy.CrossProject(peer) }
 	switch event.Type {
@@ -143,9 +142,40 @@ func rewritePayload(event FoldEvent, payload map[string]jsontext.Value, key stri
 	return event, true, nil
 }
 
-// ValidateLegacyRelayAdmission rejects fresh crossing additions while preserving
-// missing peers and cleanup. Callers resolve membership within the ingest transaction.
+// ValidateLegacyRelayAdmission rejects fresh crossing link changes.
 func ValidateLegacyRelayAdmission(ctx context.Context, event RemoteEvent, uidCrosses, shortIDCrosses, refCrosses func(context.Context, string) (bool, error)) error {
+	if event.Type == "issue.unlinked" || event.Type == "issue.links_changed" {
+		payload := PayloadMap(event.Payload)
+		var peers []string
+		if event.Type == "issue.unlinked" {
+			for _, key := range []string{"from_uid", "to_uid", "from_issue_uid", "to_issue_uid"} {
+				if peer, ok := StringValue(payload[key]); ok {
+					peers = append(peers, peer)
+				}
+			}
+			if event.RelatedIssueUID != nil {
+				peers = append(peers, *event.RelatedIssueUID)
+			}
+		} else {
+			for _, key := range []string{"blocks_removed_uids", "blocked_by_removed_uids", "related_removed_uids"} {
+				peers = append(peers, StringSlice(payload[key])...)
+			}
+		}
+		for _, peer := range peers {
+			crosses, err := uidCrosses(ctx, peer)
+			if err != nil {
+				return err
+			}
+			if crosses {
+				return fmt.Errorf("%w: event %s: %w", ErrFederationIngestValidation, event.EventUID, ErrFederationCrossProjectBoundary)
+			}
+		}
+	}
+	return ValidateLegacyRelayAdditions(ctx, event, uidCrosses, shortIDCrosses, refCrosses)
+}
+
+// ValidateLegacyRelayAdditions detects crossing additions in accepted history.
+func ValidateLegacyRelayAdditions(ctx context.Context, event RemoteEvent, uidCrosses, shortIDCrosses, refCrosses func(context.Context, string) (bool, error)) error {
 	var lookupErr error
 	crossing := false
 	checkUID := func(peer string) bool {
@@ -159,7 +189,6 @@ func ValidateLegacyRelayAdmission(ctx context.Context, event RemoteEvent, uidCro
 	switch event.Type {
 	case "issue.linked", "issue.links_changed", "issue.created", "issue.snapshot":
 		fold := FoldEvent{UID: event.EventUID, Type: event.Type, Payload: event.Payload}
-		// Admission inspects additions; folding applies the removal policy.
 		if _, _, err := StripCrossProjectLinkAdditions(fold, RelayLinkPolicy{RootOrigin: true, CrossProject: checkUID, SameRoot: func(string) bool { return false }}); err != nil {
 			return err
 		}

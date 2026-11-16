@@ -149,30 +149,45 @@ func (d *Store) prepareFederationRebuild(ctx context.Context, projectID int64) (
 		p := &result.projects[i]
 		m := &p.materialization
 		events := p.linkEvents
-		owners, err := relayLinkEndpointProjects(ctx, tx, p.linkEvents)
-		if err != nil {
-			return preparedFederationRebuild{}, err
+		needsRelayFold := slices.ContainsFunc(events, m.relayOrigins.relaySourced)
+		for _, id := range m.linkProjects {
+			if needsRelayFold {
+				break
+			}
+			active, err := relayProjectsActiveTx(ctx, tx, id, id)
+			if err != nil {
+				return preparedFederationRebuild{}, err
+			}
+			needsRelayFold = active
 		}
-		for _, other := range result.projects {
-			for uid := range other.materialization.staleIssues {
-				delete(owners, uid)
+		if !needsRelayFold {
+			m.links = db.FoldEvents(events)
+		} else {
+			owners, err := relayLinkEndpointProjects(ctx, tx, p.linkEvents)
+			if err != nil {
+				return preparedFederationRebuild{}, err
 			}
-			if !slices.Contains(m.linkProjects, other.id) {
-				continue
+			for _, other := range result.projects {
+				for uid := range other.materialization.staleIssues {
+					delete(owners, uid)
+				}
+				if !slices.Contains(m.linkProjects, other.id) {
+					continue
+				}
+				for uid := range other.projection.Issues {
+					owners[uid] = other.uid
+				}
+				for uid := range other.moved.Issues {
+					owners[uid] = other.uid
+				}
 			}
-			for uid := range other.projection.Issues {
-				owners[uid] = other.uid
+			maps.Copy(owners, moveOwners)
+			events, check, err := filterRelayLinkEvents(ctx, tx, events, m.relayOrigins, owners)
+			if err != nil {
+				return preparedFederationRebuild{}, err
 			}
-			for uid := range other.moved.Issues {
-				owners[uid] = other.uid
-			}
+			m.links = db.FoldRelayLinkEvents(events, check)
 		}
-		maps.Copy(owners, moveOwners)
-		events, check, err := filterRelayLinkEvents(ctx, tx, events, m.relayOrigins, owners)
-		if err != nil {
-			return preparedFederationRebuild{}, err
-		}
-		m.links = db.FoldRelayLinkEvents(events, check)
 		if _, err := federationGroupIssueIDs(ctx, tx, m.linkProjects, 0, nil, nil, m.rowHasher); err != nil {
 			return preparedFederationRebuild{}, err
 		}

@@ -143,7 +143,7 @@ func RunRelayLinkBoundaryKeepsSameProjectEffects(t *testing.T, store db.Storage)
 // link is refused. After the last grant is revoked the link is allowed, and a
 // legacy peer's unlink of it is applied, so the hub does not keep an edge its
 // replicas removed.
-func RunRelayLinkBoundaryFollowsActiveGrants(t *testing.T, store db.Storage) {
+func RunRelayLinkBoundaryFollowsActiveGrants(t *testing.T, store db.Storage, backend Backend) {
 	ctx := t.Context()
 	fixture := newRelayLinkBoundaryFixture(t, store, "boundary-grants")
 	peerInstanceUID, err := uid.New()
@@ -178,4 +178,48 @@ func RunRelayLinkBoundaryFollowsActiveGrants(t *testing.T, store db.Storage) {
 	require.Empty(t, linkTargetUIDs(t, store, source.ID), "a legacy peer's unlink of the allowed cross-project link is applied")
 	require.NoError(t, store.MaterializeFederatedProject(ctx, fixture.project.ID))
 	require.Empty(t, linkTargetUIDs(t, store, source.ID), "a later group materialization does not bring the removed link back")
+
+	replica := backend.Open(t)
+	t.Cleanup(func() { require.NoError(t, replica.Close()) })
+	grant, err = store.CreateRelayEnrollment(ctx, db.CreateRelayEnrollmentParams{ProjectID: fixture.project.ID, ParentTokenID: fixture.parentTokenID, SpokeInstanceUID: replica.InstanceUID(), ProtocolVersion: db.RelayProtocolVersion})
+	require.NoError(t, err)
+	require.NoError(t, store.MaterializeFederatedProject(ctx, fixture.project.ID))
+	require.Empty(t, linkTargetUIDs(t, store, source.ID), "enrollment must preserve the earlier direct unlink")
+	features := db.WithRelayPeerEventFeatures(ctx, db.SupportedEventFeatures)
+	checkpoint, err := store.(db.RelayResetStore).CreateRelayReset(features, grant.Enrollment.RelayBindingUID, fixture.signer)
+	require.NoError(t, err)
+	public := fixture.signer.PrivateKey.Public().(ed25519.PublicKey)
+	events, _, err := db.DecodeRootResetPayload(db.RootKeyPin{ProjectUID: fixture.project.UID, AuthorityUID: store.InstanceUID(), KeyID: db.RootPublicKeyID(public), PublicKey: public}, checkpoint.Snapshot)
+	require.NoError(t, err)
+	require.Contains(t, events, unlink, "the checkpoint must retain the direct unlink")
+	replicaPeer, err := replica.CreateProjectWithUID(ctx, "replica-peer", fixture.sibling.UID)
+	require.NoError(t, err)
+	_, err = replica.UpsertFederationBinding(ctx, db.FederationBinding{ProjectID: replicaPeer.ID, Role: db.FederationRoleHub, HubProjectID: replicaPeer.ID, HubProjectUID: replicaPeer.UID, Enabled: true})
+	require.NoError(t, err)
+	peerPin := db.RootKeyPin{ProjectUID: replicaPeer.UID, AuthorityUID: store.InstanceUID(), KeyID: db.RootPublicKeyID(public), PublicKey: public}
+	require.NoError(t, replica.PinRootAuthority(ctx, peerPin))
+	_, _, err = replica.CreateIssue(ctx, db.CreateIssueParams{ProjectID: replicaPeer.ID, UID: target.UID, Title: "Sibling issue", Author: "member"})
+	require.NoError(t, err)
+	replicaProject, err := replica.CreateProjectWithUID(ctx, "replica-project", fixture.project.UID)
+	require.NoError(t, err)
+	pin, err := store.RootAuthority(ctx, fixture.project.UID)
+	require.NoError(t, err)
+	require.NoError(t, replica.PinRootAuthority(ctx, pin))
+	_, err = replica.UpsertFederationBinding(ctx, db.FederationBinding{ProjectID: replicaProject.ID, Role: db.FederationRoleSpoke, HubURL: "https://daemon.example", HubProjectID: fixture.project.ID, HubProjectUID: fixture.project.UID, Actor: "member", Enabled: true, PushEnabled: true})
+	require.NoError(t, err)
+	_, err = replica.SetRelayBindingConfig(ctx, replicaProject.ID, db.RelayBindingConfig{ProtocolVersion: db.RelayProtocolVersion, BindingUID: grant.Enrollment.RelayBindingUID, AuthorityUID: store.InstanceUID(), UpstreamInstanceUID: store.InstanceUID(), HubPath: []string{store.InstanceUID(), replica.InstanceUID()}, LocalActor: "member", ResetEpoch: 1})
+	require.NoError(t, err)
+	require.NoError(t, replica.(db.RelayResetStore).InstallRelayReset(ctx, grant.Enrollment.RelayBindingUID, checkpoint.Manifest, checkpoint.Snapshot, checkpoint.Translation))
+	replicaIssue, err := replica.IssueByUID(ctx, source.UID, db.IncludeDeletedYes)
+	require.NoError(t, err)
+	require.Empty(t, linkTargetUIDs(t, replica, replicaIssue.ID), "the checkpoint must not restore the removed link")
+
+	_, _, err = store.CreateLinkAndEvent(ctx, db.CreateLinkParams{FromIssueID: source.ID, ToIssueID: target.ID, Type: "blocks", Author: "member"}, linkEvent)
+	require.NoError(t, err)
+	later := newRemoteEvent(t, fixture.project, &source.UID, "issue.unlinked", "spoke", spokeInstanceUID, time.Now().Add(2*time.Second).UnixMilli(), unlink.Payload)
+	later.RelatedIssueUID = &target.UID
+	later.ContentHash = remoteEventHash(t, later)
+	_, err = store.IngestFederationEvents(ctx, db.FederationIngestParams{ProjectID: fixture.project.ID, SpokeInstanceUID: spokeInstanceUID, Events: []db.FederationIngestEvent{{SourceEventID: 2, Event: later}}})
+	require.ErrorIs(t, err, db.ErrFederationIngestValidation)
+	require.Equal(t, []string{target.UID}, linkTargetUIDs(t, store, source.ID), "a later direct unlink must not remove the root link")
 }

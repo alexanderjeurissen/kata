@@ -21,8 +21,8 @@ type RelaySharedAccessFixture struct {
 	Signer   db.RootAttributionSigner
 }
 
-// RunRelayMoveSnapshotPeerAccess checks access before offering a moved issue snapshot.
-func RunRelayMoveSnapshotPeerAccess(t *testing.T, store db.Storage) {
+// RunRelayEventReleasePeerAccess checks access before offering events and moved issue snapshots.
+func RunRelayEventReleasePeerAccess(t *testing.T, store db.Storage) {
 	ctx := t.Context()
 	fixture := NewRelaySharedAccessFixture(t, store)
 	features := db.WithRelayPeerEventFeatures(ctx, db.SupportedEventFeatures)

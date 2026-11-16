@@ -159,7 +159,7 @@ var storageScenarios = []scenario{
 	}},
 	{name: "direct parent conflict", run: func(t *testing.T, store db.Storage) error { RunDirectParentConflict(t, store); return nil }},
 	{name: "relay cross project removal", run: func(t *testing.T, store db.Storage) error { RunRelayCrossProjectRemoval(t, store); return nil }},
-	{name: "relay move snapshot peer access", run: func(t *testing.T, store db.Storage) error { RunRelayMoveSnapshotPeerAccess(t, store); return nil }},
+	{name: "relay event release peer access", run: func(t *testing.T, store db.Storage) error { RunRelayEventReleasePeerAccess(t, store); return nil }},
 	{name: "relay offers legacy ingested events", methods: []string{"IngestFederationEvents", "PendingRelayDeliveries", "PatchIssueMetadata"}, run: func(t *testing.T, store db.Storage) error {
 		RunRelayOffersLegacyIngestedEvents(t, store)
 		return nil
@@ -179,8 +179,8 @@ var storageScenarios = []scenario{
 		RunRelayLinkBoundaryKeepsSameProjectEffects(t, store)
 		return nil
 	}},
-	{name: "relay link boundary follows active grants", methods: []string{"CreateAPIToken", "CreateIssue", "CreateLinkAndEvent", "CreateProject", "CreateRelayEnrollment", "IngestFederationEvents", "LinksByIssue", "MaterializeFederatedProject", "PinRootAuthority", "RevokeFederationEnrollment", "UpsertFederationBinding"}, run: func(t *testing.T, store db.Storage) error {
-		RunRelayLinkBoundaryFollowsActiveGrants(t, store)
+	{name: "relay link boundary follows active grants", methods: []string{"CreateAPIToken", "CreateIssue", "CreateLinkAndEvent", "CreateProject", "CreateRelayEnrollment", "IngestFederationEvents", "LinksByIssue", "MaterializeFederatedProject", "PinRootAuthority", "RevokeFederationEnrollment", "UpsertFederationBinding"}, runWithBackend: func(t *testing.T, store db.Storage, backend Backend) error {
+		RunRelayLinkBoundaryFollowsActiveGrants(t, store, backend)
 		return nil
 	}},
 	{name: "relay deferred link guard outlives binding", methods: []string{"AcceptRelayDeliveries", "CreateAPIToken", "CreateIssue", "CreateProject", "CreateRelayEnrollment", "LinksByIssue", "MaterializeFederatedProject", "PinRootAuthority", "RevokeFederationEnrollment", "UpsertFederationBinding"}, run: func(t *testing.T, store db.Storage) error {
