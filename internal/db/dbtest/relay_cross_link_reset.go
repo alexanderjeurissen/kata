@@ -289,6 +289,8 @@ func RunRelayCrossLinkResetHistory(t *testing.T, root db.Storage, backend Backen
 	require.NoError(t, err)
 	newIssue, _, err := root.CreateIssue(db.WithRootAttribution(ctx, signer, "root-member"), db.CreateIssueParams{ProjectID: projects[0].ID, Author: "root-member", Title: "After archive"})
 	require.NoError(t, err)
+	_, _, err = root.CreateLinkAndEvent(db.WithRootAttribution(ctx, signer, "root-member"), db.CreateLinkParams{FromIssueID: newIssue.ID, ToIssueID: issues[1].ID, Type: "blocks", Author: "root-member"}, db.LinkEventParams{EventType: "issue.linked", EventIssueID: newIssue.ID, Actor: "root-member", FromUID: newIssue.UID, ToUID: issues[1].UID, FromShortID: newIssue.ShortID, ToShortID: issues[1].ShortID})
+	require.NoError(t, err)
 	items, err := root.PendingRelayDeliveries(features, archivedBinding, db.RelayStreamEvent, 100)
 	require.NoError(t, err)
 	_, err = archivedReplica.AcceptRelayDeliveries(ctx, archivedBinding, db.RelayBatch{Stream: db.RelayStreamEvent, Envelopes: items})
