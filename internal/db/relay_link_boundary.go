@@ -75,17 +75,11 @@ func stripLinksChangedAdditions(event FoldEvent, crossProject func(string) bool)
 		delete(payload, "parent_set_uid")
 		changed = true
 	}
-	for _, entry := range []struct {
-		key     string
-		blocked func(string) bool
-	}{
-		{"blocks_added_uids", crossProject}, {"blocked_by_added_uids", crossProject}, {"related_added_uids", crossProject},
-	} {
-		key := entry.key
+	for _, key := range []string{"blocks_added_uids", "blocked_by_added_uids", "related_added_uids"} {
 		added := StringSlice(payload[key])
 		kept := make([]string, 0, len(added))
 		for _, peer := range added {
-			if !entry.blocked(peer) {
+			if !crossProject(peer) {
 				kept = append(kept, peer)
 			}
 		}
