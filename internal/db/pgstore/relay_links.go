@@ -15,12 +15,15 @@ func validateRelayLinkEndpointsInProject(
 	projectID int64,
 	event db.RemoteEvent,
 ) error {
-	if !db.FederationEventAffectsLinks(event.Type) || event.Type == "issue.unlinked" {
+	if !db.FederationEventAffectsLinks(event.Type) {
 		return nil
 	}
-	payload := db.RelayLinkAdditionPayload(event)
+	payload := db.PayloadMap(event.Payload)
 	if event.Type == "issue.links_changed" {
 		event.RelatedIssueUID = nil
+		if parent, ok := db.StringValue(payload["parent_set_uid"]); ok && parent != "" {
+			delete(payload, "parent_removed_uid") // The fold protects the root parent during replacement.
+		}
 	}
 	primaryUID := db.EventIssueUID(event.IssueUID)
 	refs, err := payloadReferencedIssueUIDs(event, payload)

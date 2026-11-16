@@ -1,7 +1,7 @@
 ---
 title: Share projects between hubs
 description: Connect a selected project to another Kata daemon, relay it to your devices, and understand sync and recovery.
-last_edited: 2026-11-14
+last_edited: 2026-11-15
 ---
 
 # Share projects between hubs
@@ -208,7 +208,9 @@ Reads can be stale, and concurrent changes have
 [consistency limits](../operations/federation.md#consistency-limitations).
 Cross-project issue moves are unsupported while either project is federated.
 The root can link issues across projects that share a relay group, root authority,
-and audience. Relays retain the link until both issues arrive. If a relay reports
+and audience. Relays retain the link until both issues arrive.
+A direct replica's parent edit loses to a root cross-project parent when relay enrollment starts.
+If a relay reports
 `409 unsupported_event_features`, upgrade that peer and retry. The event stream pauses at the crossing until the peer is upgraded.
 
 Embeddings are optional. A project can select one producer and share compatible
