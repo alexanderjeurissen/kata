@@ -151,9 +151,6 @@ func (e *peerFenceRejection) Unwrap() error { return e.err }
 // the store has rolled back and released the transaction's connection. Other
 // errors pass through unchanged.
 func finishPeerFenceRejection(ctx context.Context, err error) error {
-	if errors.Is(err, db.ErrTransactionFinalizationFailed) {
-		return err
-	}
 	rejection, ok := errors.AsType[*peerFenceRejection](err)
 	if !ok {
 		return err

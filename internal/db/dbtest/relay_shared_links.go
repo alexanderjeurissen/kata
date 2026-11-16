@@ -17,7 +17,6 @@ type RelaySharedAccessFixture struct {
 	Projects [2]db.Project
 	Issues   [2]db.Issue
 	Grant    db.CreatedFederationEnrollment
-	Linked   db.Event
 	Team     db.Team
 	Signer   db.RootAttributionSigner
 }
@@ -26,6 +25,29 @@ type RelaySharedAccessFixture struct {
 func RunRelayMoveSnapshotPeerAccess(t *testing.T, store db.Storage) {
 	ctx := t.Context()
 	fixture := NewRelaySharedAccessFixture(t, store)
+	features := db.WithRelayPeerEventFeatures(ctx, db.SupportedEventFeatures)
+	denied := errors.New("peer denied")
+	rejectPeer := db.WithProjectAccessTransactionCheck(features, func(_ context.Context, _ db.Transaction, uid string) error {
+		if uid == fixture.Projects[1].UID {
+			return denied
+		}
+		return nil
+	})
+	binding := fixture.Grant.Enrollment.RelayBindingUID
+	before := relayStateForBinding(t, store, binding)
+	out, err := store.PendingRelayDeliveries(rejectPeer, binding, db.RelayStreamEvent, 100)
+	require.ErrorIs(t, err, denied)
+	require.Empty(t, out)
+	require.Equal(t, before, relayStateForBinding(t, store, binding))
+	offered, err := store.PendingRelayDeliveries(features, binding, db.RelayStreamEvent, 100)
+	require.NoError(t, err)
+	require.NotEmpty(t, offered)
+	out, err = store.PendingRelayDeliveries(rejectPeer, binding, db.RelayStreamEvent, 100)
+	require.ErrorIs(t, err, denied)
+	require.Empty(t, out)
+	retry, err := store.PendingRelayDeliveries(features, binding, db.RelayStreamEvent, 100)
+	require.NoError(t, err)
+	require.Equal(t, offered, retry)
 	require.NoError(t, store.RevokeFederationEnrollment(ctx, fixture.Grant.Enrollment.ID))
 	source, err := store.CreateProject(ctx, "move-source")
 	require.NoError(t, err)
@@ -45,28 +67,22 @@ func RunRelayMoveSnapshotPeerAccess(t *testing.T, store db.Storage) {
 	require.Contains(t, moved.Event.Payload, comment.UID)
 	grant, err := store.CreateRelayEnrollment(ctx, db.CreateRelayEnrollmentParams{ProjectID: fixture.Projects[0].ID, ParentTokenID: *fixture.Grant.Enrollment.ParentTokenID, SpokeInstanceUID: "00000000000000000000000007", ProtocolVersion: db.RelayProtocolVersion, Token: "move-snapshot-relay-test-token"})
 	require.NoError(t, err)
-	binding := grant.Enrollment.RelayBindingUID
-	features := db.WithRelayPeerEventFeatures(ctx, db.SupportedEventFeatures)
+	binding = grant.Enrollment.RelayBindingUID
 	for {
 		items, err := store.PendingRelayDeliveries(features, binding, db.RelayStreamEvent, 1)
 		require.NoError(t, err)
 		require.Len(t, items, 1)
-		if items[0].SourceUID == moved.Event.UID {
+		require.NoError(t, store.AckRelayDeliveries(ctx, binding, 1, db.RelayStreamEvent, items[0].Sequence, items[0].Digest))
+		if items[0].SourceUID == patched.Event.UID {
 			break
 		}
-		require.NoError(t, store.AckRelayDeliveries(ctx, binding, 1, db.RelayStreamEvent, items[0].Sequence, items[0].Digest))
 	}
-	denied := errors.New("peer denied")
-	rejectPeer := db.WithProjectAccessTransactionCheck(features, func(_ context.Context, _ db.Transaction, uid string) error {
-		if uid == fixture.Projects[1].UID {
-			return denied
-		}
-		return nil
-	})
-	out, err := store.PendingRelayDeliveries(rejectPeer, binding, db.RelayStreamEvent, 100)
+	before = relayStateForBinding(t, store, binding)
+	out, err = store.PendingRelayDeliveries(rejectPeer, binding, db.RelayStreamEvent, 100)
 	require.ErrorIs(t, err, denied)
 	require.Empty(t, out)
-	offered, err := store.PendingRelayDeliveries(features, binding, db.RelayStreamEvent, 100)
+	require.Equal(t, before, relayStateForBinding(t, store, binding))
+	offered, err = store.PendingRelayDeliveries(features, binding, db.RelayStreamEvent, 100)
 	require.NoError(t, err)
 	require.NotEmpty(t, offered)
 	require.Equal(t, moved.Event.UID, offered[len(offered)-1].SourceUID)
@@ -107,7 +123,7 @@ func NewRelaySharedAccessFixture(t *testing.T, store db.Storage) RelaySharedAcce
 			Author: "member", Title: "Shared endpoint"})
 		require.NoError(t, err)
 	}
-	_, linked, err := store.CreateLinkAndEvent(ctx, db.CreateLinkParams{FromIssueID: issues[0].ID,
+	_, _, err = store.CreateLinkAndEvent(ctx, db.CreateLinkParams{FromIssueID: issues[0].ID,
 		ToIssueID: issues[1].ID, Type: "blocks", Author: "member"},
 		db.LinkEventParams{EventType: "issue.linked", EventIssueID: issues[0].ID, Actor: "member",
 			FromUID: issues[0].UID, ToUID: issues[1].UID, FromShortID: issues[0].ShortID, ToShortID: issues[1].ShortID})
@@ -117,5 +133,5 @@ func NewRelaySharedAccessFixture(t *testing.T, store db.Storage) RelaySharedAcce
 		ProtocolVersion: db.RelayProtocolVersion, Token: "first-shared-relay-test-token"})
 	require.NoError(t, err)
 
-	return RelaySharedAccessFixture{Projects: projects, Issues: issues, Grant: grant, Linked: linked, Team: team, Signer: db.RootAttributionSigner{AuthorityUID: store.InstanceUID(), PrivateKey: private}}
+	return RelaySharedAccessFixture{Projects: projects, Issues: issues, Grant: grant, Team: team, Signer: db.RootAttributionSigner{AuthorityUID: store.InstanceUID(), PrivateKey: private}}
 }
