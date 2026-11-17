@@ -220,28 +220,11 @@ func filterRelayCrossProjectLinkEvents(
 			if !rootOrigin {
 				return true
 			}
-			if allowed, ok := shared[peer]; ok {
-				return !allowed
+			allowed, ok := shared[peer]
+			if !ok {
+				allowed, lookupErr = relayFoldPeerAllowed(ctx, tx, event.ProjectUID, peer)
+				shared[peer] = allowed
 			}
-			var sourceID, peerID int64
-			lookupErr = tx.QueryRowContext(ctx, `SELECT id FROM projects WHERE uid=$1 AND deleted_at IS NULL`, event.ProjectUID).Scan(&sourceID)
-			if errors.Is(lookupErr, sql.ErrNoRows) {
-				lookupErr = nil
-				return true
-			}
-			if lookupErr == nil {
-				lookupErr = tx.QueryRowContext(ctx, `SELECT id FROM projects WHERE uid=$1 AND deleted_at IS NULL`, peer).Scan(&peerID)
-				if errors.Is(lookupErr, sql.ErrNoRows) {
-					lookupErr = nil
-					shared[peer] = false
-					return true
-				}
-			}
-			var allowed bool
-			if lookupErr == nil {
-				allowed, lookupErr = relaySharedProjectsTx(ctx, tx, sourceID, peerID, false)
-			}
-			shared[peer] = allowed
 			return !allowed
 		}
 		stripped, keep, err := db.StripCrossProjectLinkAdditions(event, crosses)
@@ -256,6 +239,26 @@ func filterRelayCrossProjectLinkEvents(
 		}
 	}
 	return filtered, nil
+}
+
+// relayFoldPeerAllowed applies the admission rule of
+// relayCrossProjectEndpointAllowed to a root-authored link at fold time: an
+// archived peer project keeps its link row, which readers hide until the
+// project is restored, and a live peer must share the source's relay audience.
+func relayFoldPeerAllowed(ctx context.Context, tx *sql.Tx, sourceUID, peerUID string) (bool, error) {
+	var sourceID, peerID int64
+	var archived bool
+	err := tx.QueryRowContext(ctx, `SELECT id FROM projects WHERE uid=$1 AND deleted_at IS NULL`, sourceUID).Scan(&sourceID)
+	if err == nil {
+		err = tx.QueryRowContext(ctx, `SELECT id, deleted_at IS NOT NULL FROM projects WHERE uid=$1`, peerUID).Scan(&peerID, &archived)
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil || archived {
+		return archived, err
+	}
+	return relaySharedProjectsTx(ctx, tx, sourceID, peerID, false)
 }
 
 // relayLinkEndpointProjects resolves only issue UIDs referenced by this fold.
