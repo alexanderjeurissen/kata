@@ -9,14 +9,14 @@ import (
 )
 
 type FederationSearchRequest struct {
-	ProjectID     int64    `path:"project_id"`
-	Authorization string   `header:"Authorization"`
-	Query         string   `query:"q" required:"true"`
-	Limit         int      `query:"limit,omitempty"`
-	Status        string   `query:"status,omitempty" enum:"open,closed"`
-	Labels        []string `query:"label,explode"`
-	ExcludeLabels []string `query:"exclude_label,explode"`
-	LexicalUIDs   []string `query:"lexical_uid,explode"`
+	ProjectID      int64    `path:"project_id"`
+	Authorization  string   `header:"Authorization"`
+	Query          string   `query:"q" required:"true"`
+	Limit          int      `query:"limit,omitempty"`
+	Status         string   `query:"status,omitempty" enum:"open,closed"`
+	Labels         []string `query:"label,explode"`
+	ExcludeLabels  []string `query:"exclude_label,explode"`
+	IncludeLexical bool     `query:"include_lexical,omitempty"`
 }
 
 type FederationSearchHit struct {
@@ -24,6 +24,7 @@ type FederationSearchHit struct {
 	Score     float64  `json:"score"`
 	WebURL    string   `json:"web_url,omitempty"`
 	Oversized bool     `json:"oversized,omitempty"`
+	MatchedIn []string `json:"matched_in,omitempty"`
 }
 
 type FederationSearchResponse struct {

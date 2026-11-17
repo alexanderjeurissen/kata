@@ -143,9 +143,6 @@ func registerFederationHandlers(humaAPI huma.API, cfg ServerConfig) {
 			limit = 20
 		}
 		limit = min(limit, fetchCap)
-		if len(in.LexicalUIDs) > fetchCap {
-			return nil, api.NewError(400, "validation", "too many lexical issue UIDs", "", nil)
-		}
 		res, err := hybridSearch(ctx, cfg.DB, cfg.VectorIndex, cfg.Embedder, hybridParams{ProjectID: in.ProjectID, Query: in.Query, Limit: limit, Requested: "semantic", Status: in.Status, Labels: in.Labels, ExcludeLabels: in.ExcludeLabels})
 		if err != nil {
 			if me, ok := errors.AsType[*modeError](err); ok {
@@ -162,7 +159,13 @@ func registerFederationHandlers(humaAPI huma.API, cfg ServerConfig) {
 			row := api.FederationSearchHit{Issue: issue, Score: score, WebURL: issueWebURL(cfg, issue.UID)}
 			if len(encoded) > compactRowMaxBytes {
 				row.Issue = oversizedIssue(issue)
+				row.Issue.Title = issue.Title
 				row.Oversized = true
+				if sized, err := json.Marshal(row.Issue); err != nil {
+					return api.FederationSearchHit{}, err
+				} else if len(sized) > compactRowMaxBytes {
+					row.Issue.Title = ""
+				}
 			}
 			encoded, err = json.Marshal(row)
 			if err != nil {
@@ -181,19 +184,9 @@ func registerFederationHandlers(humaAPI huma.API, cfg ServerConfig) {
 			}
 			out.Body.Results = append(out.Body.Results, row)
 		}
-		out.Body.Lexical = make([]api.FederationSearchHit, 0, len(in.LexicalUIDs))
-		issues, err := cfg.DB.IssuesByUIDs(ctx, in.LexicalUIDs, db.IncludeDeletedNo)
-		if err != nil {
-			return nil, internalAPIError(err)
-		}
-		var ids []int64
-		for _, issue := range issues {
-			if issue.ProjectID == in.ProjectID {
-				ids = append(ids, issue.ID)
-			}
-		}
-		if len(ids) > 0 {
-			matches, err := cfg.DB.SearchFTS(ctx, db.SearchFTSParams{ProjectID: in.ProjectID, Query: in.Query, Limit: len(ids), Status: in.Status, Labels: in.Labels, ExcludeLabels: in.ExcludeLabels, AllowedIssueIDs: ids})
+		out.Body.Lexical = []api.FederationSearchHit{}
+		if in.IncludeLexical {
+			matches, err := cfg.DB.SearchFTS(ctx, db.SearchFTSParams{ProjectID: in.ProjectID, Query: in.Query, Limit: limit, Status: in.Status, Labels: in.Labels, ExcludeLabels: in.ExcludeLabels})
 			if err != nil {
 				return nil, internalAPIError(err)
 			}
@@ -202,6 +195,7 @@ func registerFederationHandlers(humaAPI huma.API, cfg ServerConfig) {
 				if err != nil {
 					return nil, internalAPIError(err)
 				}
+				row.MatchedIn = hit.MatchedIn
 				out.Body.Lexical = append(out.Body.Lexical, row)
 			}
 		}

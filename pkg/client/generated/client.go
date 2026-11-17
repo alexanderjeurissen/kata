@@ -5729,9 +5729,10 @@ func (c *Client) SearchFederationProject(ctx context.Context, options *SearchFed
 	var err error
 
 	queryEncoding := map[string]runtime.QueryEncoding{
-		"limit":  {Style: "form", Explode: &[]bool{false}[0]},
-		"q":      {Style: "form", Explode: &[]bool{false}[0]},
-		"status": {Style: "form", Explode: &[]bool{false}[0]},
+		"include_lexical": {Style: "form", Explode: &[]bool{false}[0]},
+		"limit":           {Style: "form", Explode: &[]bool{false}[0]},
+		"q":               {Style: "form", Explode: &[]bool{false}[0]},
+		"status":          {Style: "form", Explode: &[]bool{false}[0]},
 	}
 	reqParams := runtime.RequestOptionsParameters{
 		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/projects/{project_id}/federation/search",

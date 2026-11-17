@@ -5,6 +5,7 @@ import type { Issue } from './issue.ts'
 
 export interface FederationSearchHit {
   issue: Issue
+  matched_in?: string[]
   oversized?: boolean
   score: number
   web_url?: string

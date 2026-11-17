@@ -319,7 +319,8 @@ func TestDirectSpokeSearchUsesHubResults(t *testing.T) {
 	var hubRows struct {
 		Results []struct {
 			Issue struct {
-				UID string `json:"uid"`
+				UID   string `json:"uid"`
+				Title string `json:"title"`
 			} `json:"issue"`
 			WebURL    string `json:"web_url"`
 			Oversized bool   `json:"oversized"`
@@ -341,6 +342,12 @@ func TestDirectSpokeSearchUsesHubResults(t *testing.T) {
 	oversizedFound := false
 	for i, row := range hubRows.Results {
 		require.Equal(t, row.Issue.UID, spokeRows.Results[i].Issue.UID)
+		if row.Issue.UID == bigBody.UID {
+			t.Run("oversized body retains short title", func(t *testing.T) {
+				require.True(t, row.Oversized)
+				require.Equal(t, bigBody.Title, row.Issue.Title)
+			})
+		}
 		if row.Issue.UID == issue.UID {
 			require.True(t, row.Oversized)
 			require.True(t, spokeRows.Results[i].Oversized)
@@ -402,6 +409,72 @@ func TestDirectSpokeSearchUsesHubResults(t *testing.T) {
 	for _, hit := range body.Results {
 		require.NotEqual(t, late.UID, hit.Issue.UID, "a stale local word match must not survive a hub text edit")
 	}
+	t.Run("pending comment does not restore stale status", func(t *testing.T) {
+		_, _, err := spoke.DB.CreateComment(ctx, db.CreateCommentParams{IssueID: local.ID, Author: "tester", Body: "a pending note"})
+		require.NoError(t, err)
+		resp, raw := envGetRaw(t, spoke, fmt.Sprintf("/api/v1/projects/%d/search?q=claim&status=open", replica.ID))
+		require.Equal(t, http.StatusOK, resp.StatusCode, string(raw))
+		var result struct {
+			Results []struct {
+				Issue db.Issue `json:"issue"`
+			} `json:"results"`
+		}
+		require.NoError(t, json.Unmarshal(raw, &result))
+		for _, hit := range result.Results {
+			require.NotEqual(t, issue.UID, hit.Issue.UID)
+		}
+	})
+	t.Run("pending local issue remains searchable", func(t *testing.T) {
+		pending, _, err := spoke.DB.CreateIssue(ctx, db.CreateIssueParams{ProjectID: replica.ID, Title: "pending zebra", Author: "tester"})
+		require.NoError(t, err)
+		resp, raw := envGetRaw(t, spoke, fmt.Sprintf("/api/v1/projects/%d/search?q=zebra", replica.ID))
+		require.Equal(t, http.StatusOK, resp.StatusCode, string(raw))
+		var result struct {
+			Results []struct {
+				Issue db.Issue `json:"issue"`
+			} `json:"results"`
+		}
+		require.NoError(t, json.Unmarshal(raw, &result))
+		found := false
+		for _, hit := range result.Results {
+			found = found || hit.Issue.UID == pending.UID
+		}
+		require.True(t, found, "pending local issue must appear")
+		_, _, _, err = spoke.DB.EditIssue(ctx, db.EditIssueParams{IssueID: pending.ID, Title: new("pending badger edit"), Actor: "tester"})
+		require.NoError(t, err)
+		resp, raw = envGetRaw(t, spoke, fmt.Sprintf("/api/v1/projects/%d/search?q=badger&status=open", replica.ID))
+		require.Equal(t, http.StatusOK, resp.StatusCode, string(raw))
+		require.NoError(t, json.Unmarshal(raw, &result))
+		found = false
+		for _, hit := range result.Results {
+			if hit.Issue.UID == pending.UID {
+				found = true
+				require.Equal(t, "pending badger edit", hit.Issue.Title)
+			}
+		}
+		require.True(t, found, "pending local edit must appear")
+	})
+	t.Run("unpulled unindexed hub word match", func(t *testing.T) {
+		fresh, _, err := hub.DB.CreateIssue(ctx, db.CreateIssueParams{ProjectID: project.ID, Title: "fresh aardvark", Author: "tester"})
+		require.NoError(t, err)
+		resp, raw := envGetRaw(t, spoke, fmt.Sprintf("/api/v1/projects/%d/search?q=aardvark", replica.ID))
+		require.Equal(t, http.StatusOK, resp.StatusCode, string(raw))
+		var result struct {
+			Results []struct {
+				Issue  db.Issue `json:"issue"`
+				Remote bool     `json:"remote"`
+			} `json:"results"`
+		}
+		require.NoError(t, json.Unmarshal(raw, &result))
+		found := false
+		for _, hit := range result.Results {
+			if hit.Issue.UID == fresh.UID {
+				found = true
+				require.True(t, hit.Remote)
+			}
+		}
+		require.True(t, found, "unpulled hub issue must appear")
+	})
 }
 
 func TestDirectSpokeSearchReportsUnavailableHub(t *testing.T) {

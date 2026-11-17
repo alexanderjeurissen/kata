@@ -3971,7 +3971,7 @@ export const getSearchFederationProjectUrl = (
   const normalizedParams = new URLSearchParams()
 
   Object.entries(params || {}).forEach(([key, value]) => {
-    const explodeParameters = ['label', 'exclude_label', 'lexical_uid']
+    const explodeParameters = ['label', 'exclude_label']
 
     if (Array.isArray(value) && explodeParameters.includes(key)) {
       value.forEach((v) => {

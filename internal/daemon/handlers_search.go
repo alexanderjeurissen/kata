@@ -96,11 +96,7 @@ func registerSearchHandlers(humaAPI huma.API, cfg ServerConfig) {
 					if err != nil {
 						return nil, nil, false, err
 					}
-					uids := make([]string, 0, len(lexical))
-					for _, hit := range lexical {
-						uids = append(uids, hit.Issue.UID)
-					}
-					hits, matched, err := client.SearchShared(ctx, cred.HubProjectID, p, fetch, uids)
+					hits, matched, err := client.SearchShared(ctx, cred.HubProjectID, p, fetch)
 					if err != nil {
 						return nil, nil, false, err
 					}
@@ -109,18 +105,29 @@ func registerSearchHandlers(humaAPI huma.API, cfg ServerConfig) {
 						return nil, nil, false, err
 					}
 					current, err := hydrateRemoteHits(ctx, cfg.DB, matched, p, fetch)
+					if err != nil {
+						return nil, nil, false, err
+					}
 					byUID := make(map[string]db.SearchCandidate, len(current))
 					for _, hit := range current {
 						byUID[hit.Issue.UID] = hit
 					}
-					var hubLexical []db.SearchCandidate
+					var unmatched []db.SearchCandidate
 					for _, hit := range lexical {
-						if row, ok := byUID[hit.Issue.UID]; ok {
-							row.MatchedIn = hit.MatchedIn
-							hubLexical = append(hubLexical, row)
+						if _, exists := byUID[hit.Issue.UID]; !exists {
+							unmatched = append(unmatched, hit)
 						}
 					}
-					return candidates, hubLexical, false, err
+					pending, err := pendingSearchIssues(ctx, cfg.DB, binding, unmatched)
+					if err != nil {
+						return nil, nil, false, err
+					}
+					for _, hit := range unmatched {
+						if pending[hit.Issue.UID] {
+							current = append(current, hit)
+						}
+					}
+					return candidates, current, false, nil
 				}
 			}
 			res, err = hybridSearch(ctx, cfg.DB, cfg.VectorIndex, cfg.Embedder, params)
@@ -173,4 +180,34 @@ func registerSearchHandlers(humaAPI huma.API, cfg ServerConfig) {
 		}
 		return out, nil
 	})
+}
+
+func pendingSearchIssues(ctx context.Context, store db.Storage, binding db.FederationBinding, lexical []db.SearchCandidate) (map[string]bool, error) {
+	wanted := make(map[string]bool, len(lexical))
+	for _, hit := range lexical {
+		wanted[hit.Issue.UID] = false
+	}
+	pending := make(map[string]bool)
+	for cursor := binding.PushCursorEventID; len(pending) < len(wanted); {
+		events, err := store.PendingFederationPushEvents(ctx, binding.ProjectID, store.InstanceUID(), cursor, 1000)
+		if err != nil {
+			return nil, err
+		}
+		if len(events) == 0 {
+			break
+		}
+		for _, event := range events {
+			if event.IssueUID != nil {
+				if _, ok := wanted[*event.IssueUID]; ok && pushEventMaterializesIssue(event, *event.IssueUID) {
+					pending[*event.IssueUID] = true
+				}
+			}
+		}
+		next := events[len(events)-1].ID
+		if next <= cursor {
+			break
+		}
+		cursor = next
+	}
+	return pending, nil
 }

@@ -9,5 +9,5 @@ export type SearchFederationProjectParams = {
   status?: SearchFederationProjectStatus
   label?: string[]
   exclude_label?: string[]
-  lexical_uid?: string[]
+  include_lexical?: boolean
 }

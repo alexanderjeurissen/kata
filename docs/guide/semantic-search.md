@@ -267,10 +267,12 @@ explicit semantic or hybrid search reports the failure. Relay spokes retain
 their existing embedding behavior.
 
 Shared-project semantic results show the hub's current content and status, even
-when a local copy is stale. Results the spoke has not pulled, or has deleted
+when a local copy is stale. Default and hybrid searches also find local issues
+whose creation is still waiting to reach the hub. Results the spoke has not pulled, or has deleted
 locally, are marked `remote` and use `project#<lowercase ULID>` as their reference.
 The hub link opens the issue before the pull; `show` and `comment` resolve its
-reference after the pull. Oversized rows retain their identity, status, and link.
+reference after the pull. Oversized rows retain their identity, status, and link;
+they also retain the title when it fits within the row limit.
 Earlier shared-project vectors are removed from the spoke's index.
 
 Upgrade the hub to a version with the federation search route before upgrading

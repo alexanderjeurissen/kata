@@ -3,7 +3,6 @@ package daemon
 import (
 	"fmt"
 	"sort"
-	"strconv"
 
 	"go.kenn.io/kata/internal/db"
 	"go.kenn.io/kit/search/rrf"
@@ -43,7 +42,7 @@ func resolveMode(requested string, configured bool) (searchMode, error) {
 }
 
 // mergeRRF fuses two ranked legs with reciprocal rank fusion (k=60, equal
-// weights), deduping by local ID or remote UID and unioning matched_in. Ties break by RRF
+// weights), deduping by issue UID and unioning matched_in. Ties break by RRF
 // score desc, then updated_at desc, then issue id asc. The resulting Score is
 // the RRF score.
 func mergeRRF(lexical, vector []db.SearchCandidate, limit int) ([]db.SearchCandidate, error) {
@@ -55,10 +54,7 @@ func mergeRRF(lexical, vector []db.SearchCandidate, limit int) ([]db.SearchCandi
 	add := func(leg []db.SearchCandidate) []string {
 		keys := make([]string, len(leg))
 		for position, c := range leg {
-			k := "local:" + strconv.FormatInt(c.Issue.ID, 10)
-			if c.Remote {
-				k = "remote:" + c.Issue.UID
-			}
+			k := c.Issue.UID
 			keys[position] = k
 			a, exists := byID[k]
 			if !exists {

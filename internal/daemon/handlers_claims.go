@@ -826,7 +826,7 @@ type claimHubClient struct {
 const hitEnvelopeBytes = 4096
 const responseEnvelopeBytes = 1024
 
-func (c *claimHubClient) SearchShared(ctx context.Context, projectID int64, p hybridParams, limit int, uids []string) ([]api.FederationSearchHit, []api.FederationSearchHit, error) {
+func (c *claimHubClient) SearchShared(ctx context.Context, projectID int64, p hybridParams, limit int) ([]api.FederationSearchHit, []api.FederationSearchHit, error) {
 	if c.transportErr != nil {
 		return nil, nil, c.transportErr
 	}
@@ -834,13 +834,18 @@ func (c *claimHubClient) SearchShared(ctx context.Context, projectID int64, p hy
 		limit = 20
 	}
 	limit = min(limit, fetchCap)
-	maxBytes := int64((limit+len(uids))*(compactRowMaxBytes+hitEnvelopeBytes) + responseEnvelopeBytes)
+	rows := limit
+	if p.Requested != "semantic" {
+		rows += limit
+	}
+	maxBytes := int64(rows*(compactRowMaxBytes+hitEnvelopeBytes) + responseEnvelopeBytes)
 	client, err := generated.NewDefaultClient(c.baseURL, runtime.WithHTTPClient(claimHubDoer{client: c.client, successBodyLimit: maxBytes}))
 	if err != nil {
 		return nil, nil, err
 	}
 	count := int64(limit)
-	query := &generated.SearchFederationProjectQuery{Q: p.Query, Limit: &count, Label: p.Labels, ExcludeLabel: p.ExcludeLabels, LexicalUID: uids}
+	includeLexical := p.Requested != "semantic"
+	query := &generated.SearchFederationProjectQuery{Q: p.Query, Limit: &count, Label: p.Labels, ExcludeLabel: p.ExcludeLabels, IncludeLexical: &includeLexical}
 	if p.Status != "" {
 		status := generated.SearchFederationProjectQueryStatus(p.Status)
 		query.Status = &status

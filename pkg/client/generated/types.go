@@ -2999,10 +2999,11 @@ func (f FederationRootKeyRepinResult) Validate() error {
 }
 
 type FederationSearchHit struct {
-	Issue     Issue   `json:"issue"`
-	Oversized *bool   `json:"oversized,omitempty"`
-	Score     float64 `json:"score"`
-	WebURL    *string `json:"web_url,omitempty"`
+	Issue     Issue    `json:"issue"`
+	MatchedIn []string `json:"matched_in,omitempty"`
+	Oversized *bool    `json:"oversized,omitempty"`
+	Score     float64  `json:"score"`
+	WebURL    *string  `json:"web_url,omitempty"`
 }
 
 func (f FederationSearchHit) Validate() error {

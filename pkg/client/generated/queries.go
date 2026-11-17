@@ -249,12 +249,12 @@ func (o OfferRelayDeliveriesQuery) Validate() error {
 }
 
 type SearchFederationProjectQuery struct {
-	Q            string                              `json:"q" validate:"required"`
-	Limit        *int64                              `json:"limit,omitempty"`
-	Status       *SearchFederationProjectQueryStatus `json:"status,omitempty"`
-	Label        []string                            `json:"label,omitempty"`
-	ExcludeLabel []string                            `json:"exclude_label,omitempty"`
-	LexicalUID   []string                            `json:"lexical_uid,omitempty"`
+	Q              string                              `json:"q" validate:"required"`
+	Limit          *int64                              `json:"limit,omitempty"`
+	Status         *SearchFederationProjectQueryStatus `json:"status,omitempty"`
+	Label          []string                            `json:"label,omitempty"`
+	ExcludeLabel   []string                            `json:"exclude_label,omitempty"`
+	IncludeLexical *bool                               `json:"include_lexical,omitempty"`
 }
 
 func (s SearchFederationProjectQuery) Validate() error {

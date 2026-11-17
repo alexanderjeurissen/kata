@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"fmt"
 	"slices"
 	"testing"
 	"time"
@@ -10,7 +11,7 @@ import (
 )
 
 func cand(id int64, score float64, matched ...string) db.SearchCandidate {
-	return db.SearchCandidate{Issue: db.Issue{ID: id}, Score: score, MatchedIn: matched}
+	return db.SearchCandidate{Issue: db.Issue{ID: id, UID: fmt.Sprint(id)}, Score: score, MatchedIn: matched}
 }
 
 func TestMergeRRFCombinesAndDedupes(t *testing.T) {
@@ -30,6 +31,17 @@ func TestMergeRRFCombinesAndDedupes(t *testing.T) {
 	if len(merged) != 3 {
 		t.Fatalf("expected 3 unique issues, got %d", len(merged))
 	}
+}
+
+func TestMergeRRFDeduplicatesRemoteAndLocalUID(t *testing.T) {
+	local := db.SearchCandidate{Issue: db.Issue{ID: 7, UID: "01HZNQ7VFPK1XGD8R5MABXD4EX"}, MatchedIn: []string{"title"}}
+	remote := db.SearchCandidate{Issue: db.Issue{UID: local.Issue.UID}, Remote: true, Hub: true, MatchedIn: []string{"semantic"}}
+	got, err := mergeRRF([]db.SearchCandidate{local}, []db.SearchCandidate{remote}, 10)
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	require.Zero(t, got[0].Issue.ID)
+	require.True(t, got[0].Remote)
+	require.ElementsMatch(t, []string{"title", "semantic"}, got[0].MatchedIn)
 }
 
 func TestMergeRRFEmptyLegs(t *testing.T) {
@@ -84,8 +96,8 @@ func TestMergeRRFTieBreaksByMostRecentlyUpdated(t *testing.T) {
 	// lose under the id-asc final tiebreak). Fails if updated_at is ignored.
 	older := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	newer := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
-	lex := []db.SearchCandidate{{Issue: db.Issue{ID: 1, UpdatedAt: older}, MatchedIn: []string{"title"}}}
-	vec := []db.SearchCandidate{{Issue: db.Issue{ID: 2, UpdatedAt: newer}, MatchedIn: []string{"semantic"}}}
+	lex := []db.SearchCandidate{{Issue: db.Issue{ID: 1, UID: "1", UpdatedAt: older}, MatchedIn: []string{"title"}}}
+	vec := []db.SearchCandidate{{Issue: db.Issue{ID: 2, UID: "2", UpdatedAt: newer}, MatchedIn: []string{"semantic"}}}
 	merged, err := mergeRRF(lex, vec, 10)
 	require.NoError(t, err)
 

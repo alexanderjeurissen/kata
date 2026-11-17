@@ -106,13 +106,9 @@ func hybridSearch(ctx context.Context, store db.Storage, idx *vector.Index, emb 
 	lexErrCh := make(chan error, 1)
 	if mode != modeSemantic {
 		go func() {
-			status, labels, exclude := p.Status, p.Labels, p.ExcludeLabels
-			if p.RemoteVector != nil && mode == modeHybrid {
-				status, labels, exclude = "", nil, nil
-			}
 			c, e := store.SearchFTS(ctx, db.SearchFTSParams{
 				ProjectID: p.ProjectID, Query: p.Query, Limit: fetch, IncludeDeleted: p.IncludeDeleted,
-				Labels: labels, ExcludeLabels: exclude, Status: status,
+				Labels: p.Labels, ExcludeLabels: p.ExcludeLabels, Status: p.Status,
 				AllowedIssueIDs: p.AllowedIssueIDs,
 				IssueScope:      p.IssueScope,
 			})
@@ -123,7 +119,7 @@ func hybridSearch(ctx context.Context, store db.Storage, idx *vector.Index, emb 
 		lexErrCh <- nil
 	}
 
-	// The hub needs lexical UIDs to apply its current state and filters.
+	// Preserve local matches until the hub returns its search results.
 	if p.RemoteVector != nil {
 		if e := <-lexErrCh; e != nil {
 			return hybridResult{}, &modeError{status: 500, msg: e.Error()}
@@ -159,12 +155,6 @@ func hybridSearch(ctx context.Context, store db.Storage, idx *vector.Index, emb 
 				status = 400
 			}
 			return hybridResult{}, &modeError{status: status, msg: vecErr.Error()}
-		}
-		if p.RemoteVector != nil {
-			lexical, err = store.SearchFTS(ctx, db.SearchFTSParams{ProjectID: p.ProjectID, Query: p.Query, Limit: fetch, IncludeDeleted: p.IncludeDeleted, Labels: p.Labels, ExcludeLabels: p.ExcludeLabels, Status: p.Status, AllowedIssueIDs: p.AllowedIssueIDs, IssueScope: p.IssueScope})
-			if err != nil {
-				return hybridResult{}, &modeError{status: 500, msg: err.Error()}
-			}
 		}
 		return hybridResult{
 			Mode: modeLexical, Degraded: true, DegradedReason: vecErr.Error(),
@@ -348,7 +338,11 @@ func hydrateRemoteHits(ctx context.Context, store db.Storage, hits []api.Federat
 		} else {
 			issue.ID, issue.ShortID, issue.RecurrenceID = local.ID, local.ShortID, local.RecurrenceID
 		}
-		candidates = append(candidates, db.SearchCandidate{Issue: issue, Score: hit.Score, MatchedIn: []string{"semantic"}, Remote: remote, Hub: true, WebURL: hit.WebURL, Oversized: hit.Oversized})
+		matched := hit.MatchedIn
+		if len(matched) == 0 {
+			matched = []string{"semantic"}
+		}
+		candidates = append(candidates, db.SearchCandidate{Issue: issue, Score: hit.Score, MatchedIn: matched, Remote: remote, Hub: true, WebURL: hit.WebURL, Oversized: hit.Oversized})
 	}
 	return truncate(candidates, fetch), nil
 }
