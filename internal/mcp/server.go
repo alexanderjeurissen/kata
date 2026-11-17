@@ -893,11 +893,11 @@ type IssueListOutput struct {
 
 // SearchHit adds relevance information to a compact issue.
 type SearchHit struct {
-	Oversized bool         `json:"oversized,omitempty"`
+	Oversized bool         `json:"oversized,omitempty" jsonschema:"Row contains only identity, status, and web_url."`
 	Issue     IssueSummary `json:"issue"`
 	Score     float64      `json:"score"`
 	MatchedIn []string     `json:"matched_in"`
-	Remote    bool         `json:"remote,omitempty" jsonschema:"Issue has not synced locally; its UID is the stable ref"`
+	Remote    bool         `json:"remote,omitempty" jsonschema:"Use qualified_ref with the lowercase UID after pull. Before pull, web_url opens the issue on the hub."`
 }
 
 // SearchOutput reports the effective mode and any semantic fallback.
