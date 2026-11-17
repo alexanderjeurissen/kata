@@ -48,7 +48,7 @@ func TestRelayCrossProjectParentReplacement(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, oldParent.UID, parent.ToIssueUID)
 
-			_, err = root.store.ReplaceParentAndEvents(rootCtx, db.ReplaceParentAndEventsParams{
+			_, err = root.store.(db.ParentLinkReplacementStorage).ReplaceParentAndEvents(rootCtx, db.ReplaceParentAndEventsParams{
 				ExpectedParentLinkID: oldLink.ID, ExpectedParentIssueID: oldParent.ID,
 				Link:        db.CreateLinkParams{FromIssueID: child.ID, ToIssueID: newParent.ID, Type: "parent", Author: root.account},
 				UnlinkEvent: linkEvent("issue.unlinked", oldParent), LinkEvent: linkEvent("issue.linked", newParent),
