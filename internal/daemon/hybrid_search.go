@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"go.kenn.io/kata/internal/api"
 	"go.kenn.io/kata/internal/db"
 	"go.kenn.io/kata/internal/embedding"
+	"go.kenn.io/kata/internal/uid"
 	"go.kenn.io/kata/internal/vector"
 	kitvec "go.kenn.io/kit/vector"
 )
@@ -304,21 +306,24 @@ func hydrateRemoteHits(ctx context.Context, store db.Storage, hits []api.Federat
 	}
 	var candidates []db.SearchCandidate
 	for _, hit := range hits {
+		if !uid.Valid(hit.Issue.UID) {
+			return nil, fmt.Errorf("invalid hub issue UID %q", hit.Issue.UID)
+		}
 		local, err := store.IssueByUID(ctx, hit.Issue.UID, db.IncludeDeletedYes)
 		remote := errors.Is(err, db.ErrNotFound)
 		if err != nil && !remote {
 			return nil, err
 		}
 		remote = remote || local.ProjectID != p.ProjectID
-		issue := hit.Issue
+		issue := hit.Issue.Issue
 		issue.ProjectID, issue.ProjectUID = p.ProjectID, project.UID
 		if remote {
 			issue.ID = 0
-			issue.ShortID, issue.RecurrenceID = issue.UID, nil
+			issue.RecurrenceID = nil
 		} else {
 			issue.ID, issue.ShortID, issue.RecurrenceID = local.ID, local.ShortID, local.RecurrenceID
 		}
-		candidates = append(candidates, db.SearchCandidate{Issue: issue, Score: hit.Score, MatchedIn: []string{"semantic"}, Remote: remote, Hub: true, WebURL: hit.WebURL})
+		candidates = append(candidates, db.SearchCandidate{Issue: issue, Score: hit.Score, MatchedIn: []string{"semantic"}, Remote: remote, Hub: true, WebURL: hit.Issue.WebURL, Oversized: hit.Issue.Oversized})
 	}
 	return truncate(candidates, fetch), nil
 }

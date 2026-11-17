@@ -893,6 +893,7 @@ type IssueListOutput struct {
 
 // SearchHit adds relevance information to a compact issue.
 type SearchHit struct {
+	Oversized bool         `json:"oversized,omitempty"`
 	Issue     IssueSummary `json:"issue"`
 	Score     float64      `json:"score"`
 	MatchedIn []string     `json:"matched_in"`

@@ -386,7 +386,7 @@ func TestReconcileDirectSpokeEmbedsOnlyPrivateProjects(t *testing.T) {
 	require.Contains(t, encoded[0][0], "private search target")
 }
 
-func TestReconcilePausedDirectSpokeEmbedsLocally(t *testing.T) {
+func TestReconcilePausedDirectSpokeDoesNotEmbed(t *testing.T) {
 	ctx := t.Context()
 	store := newReconcilerTestStore(t)
 	project, err := store.CreateProject(ctx, "shared-project")
@@ -398,8 +398,7 @@ func TestReconcilePausedDirectSpokeEmbedsLocally(t *testing.T) {
 	emb := newReconcilerArtifactEmbedder(t, "example-model")
 	r := NewReconciler(store, openTestVectorIndex(t), emb, ReconcilerConfig{BatchSize: 64})
 	require.NoError(t, r.reconcileOnce(ctx))
-	require.Len(t, emb.inputs(), 1)
-	require.Contains(t, emb.inputs()[0][0], "paused project issue")
+	require.Empty(t, emb.inputs())
 }
 
 type reconcilerArtifactEmbedder struct {

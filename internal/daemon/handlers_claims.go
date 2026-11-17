@@ -823,41 +823,32 @@ type claimHubClient struct {
 	transportErr error
 }
 
-// Full issue snapshots can be larger than the other claim responses.
-const maxHubSearchResponseBytes = 8 << 20
+const hitEnvelopeBytes = 128
+const responseEnvelopeBytes = 1024
 
 func (c *claimHubClient) SearchShared(ctx context.Context, projectID int64, p hybridParams, limit int) ([]api.FederationSearchHit, error) {
 	if c.transportErr != nil {
 		return nil, c.transportErr
 	}
-	values := url.Values{"q": {p.Query}, "limit": {fmt.Sprint(limit)}, "label": p.Labels, "exclude_label": p.ExcludeLabels}
+	maxBytes := int64(fetchCap*(compactRowMaxBytes+hitEnvelopeBytes) + responseEnvelopeBytes)
+	client, err := generated.NewDefaultClient(c.baseURL, runtime.WithHTTPClient(claimHubDoer{client: c.client, successBodyLimit: maxBytes}))
+	if err != nil {
+		return nil, err
+	}
+	count := int64(limit)
+	query := &generated.SearchFederationProjectQuery{Q: p.Query, Limit: &count, Label: p.Labels, ExcludeLabel: p.ExcludeLabels}
 	if p.Status != "" {
-		values.Set("status", p.Status)
+		status := generated.SearchFederationProjectQueryStatus(p.Status)
+		query.Status = &status
 	}
-	path := fmt.Sprintf("/api/v1/projects/%d/federation/search", projectID)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path+"?"+values.Encode(), nil)
+	response, err := client.SearchFederationProjectWithResponse(ctx, &generated.SearchFederationProjectRequestOptions{PathParams: &generated.SearchFederationProjectPath{ProjectID: projectID}, Query: query})
 	if err != nil {
 		return nil, err
-	}
-	resp, err := c.client.Do(req) //nolint:gosec // The client pins credentials to the configured hub origin.
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxHubSearchResponseBytes+1))
-	if err != nil {
-		return nil, err
-	}
-	if len(data) > maxHubSearchResponseBytes {
-		return nil, fmt.Errorf("hub search response exceeds %d bytes", maxHubSearchResponseBytes)
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, &claimHubStatusError{Path: path, StatusCode: resp.StatusCode, Body: string(data)}
 	}
 	var body struct {
 		Results []api.FederationSearchHit `json:"results"`
 	}
-	if err := json.Unmarshal(data, &body); err != nil {
+	if err := json.Unmarshal(response.Body, &body); err != nil {
 		return nil, err
 	}
 	return body.Results, nil
@@ -1200,7 +1191,7 @@ func (c *claimHubClient) ClaimStatus(ctx context.Context, hubProjectID int64, re
 	if c.transportErr != nil {
 		return api.ClaimStatusBody{}, c.transportErr
 	}
-	apiClient, err := generated.NewDefaultClient(c.baseURL, runtime.WithHTTPClient(claimHubDoer{c.client}))
+	apiClient, err := generated.NewDefaultClient(c.baseURL, runtime.WithHTTPClient(claimHubDoer{client: c.client}))
 	if err != nil {
 		return api.ClaimStatusBody{}, err
 	}
@@ -1226,7 +1217,7 @@ func (c *claimHubClient) claimAction(
 	if c.transportErr != nil {
 		return api.ClaimActionResponseBody{}, c.transportErr
 	}
-	apiClient, err := generated.NewDefaultClient(c.baseURL, runtime.WithHTTPClient(claimHubDoer{c.client}))
+	apiClient, err := generated.NewDefaultClient(c.baseURL, runtime.WithHTTPClient(claimHubDoer{client: c.client}))
 	if err != nil {
 		return api.ClaimActionResponseBody{}, err
 	}
@@ -1282,7 +1273,10 @@ func normalizeForwardedClaimStatus(body *api.ClaimStatusBody) {
 }
 
 // claimHubDoer keeps error bodies bounded while generated operations own requests.
-type claimHubDoer struct{ client *http.Client }
+type claimHubDoer struct {
+	client           *http.Client
+	successBodyLimit int64
+}
 
 func (d claimHubDoer) Do(ctx context.Context, req *http.Request) (*http.Response, error) {
 	req = req.Clone(ctx)
@@ -1297,6 +1291,21 @@ func (d claimHubDoer) Do(ctx context.Context, req *http.Request) (*http.Response
 		defer func() { _ = resp.Body.Close() }()
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return nil, &claimHubStatusError{Path: req.URL.Path, StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(body))}
+	}
+	if d.successBodyLimit > 0 {
+		body := resp.Body
+		defer func() { _ = body.Close() }()
+		if resp.ContentLength > d.successBodyLimit {
+			return nil, fmt.Errorf("hub search response exceeds %d bytes", d.successBodyLimit)
+		}
+		data, err := io.ReadAll(io.LimitReader(resp.Body, d.successBodyLimit+1))
+		if err != nil {
+			return nil, err
+		}
+		if int64(len(data)) > d.successBodyLimit {
+			return nil, fmt.Errorf("hub search response exceeds %d bytes", d.successBodyLimit)
+		}
+		resp.Body = io.NopCloser(bytes.NewReader(data))
 	}
 	return resp, nil
 }

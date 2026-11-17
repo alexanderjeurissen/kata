@@ -44,7 +44,7 @@ func registerSearchHandlers(humaAPI huma.API, cfg ServerConfig) {
 		if bindingErr != nil && !errors.Is(bindingErr, db.ErrNotFound) {
 			return nil, internalAPIError(bindingErr)
 		}
-		direct := bindingErr == nil && binding.Enabled && isDirectSpoke(binding)
+		direct := bindingErr == nil && binding.IsDirectSpoke()
 		if insecureReadonlyRequest(ctx) && (cfg.Embedder != nil || direct) {
 			switch mode {
 			case "hybrid", "semantic":
@@ -140,13 +140,14 @@ func registerSearchHandlers(humaAPI huma.API, cfg ServerConfig) {
 		out.Body.Results = make([]api.SearchHit, 0, len(res.Hits))
 		for _, c := range res.Hits {
 			webURL := issueWebURL(cfg, c.Issue.UID)
-			if c.Remote {
+			if c.Hub {
 				webURL = c.WebURL
 			}
 			out.Body.Results = append(out.Body.Results, api.SearchHit{
 				Issue:     c.Issue,
 				WebURL:    webURL,
 				Remote:    c.Remote,
+				Oversized: c.Oversized,
 				Score:     c.Score,
 				MatchedIn: c.MatchedIn,
 			})

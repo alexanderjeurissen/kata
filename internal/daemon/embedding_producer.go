@@ -13,10 +13,6 @@ import (
 	"go.kenn.io/kata/internal/embedding"
 )
 
-func isDirectSpoke(binding db.FederationBinding) bool {
-	return binding.Role == db.FederationRoleSpoke && binding.RelayConfig == nil
-}
-
 // Project configuration selects who may generate; source actor labels and
 // artifact producer attribution never grant generation authority.
 func (r *Reconciler) projectGenerationAllowed(ctx context.Context, projectUID string, recipe embedding.ArtifactIdentity, syncArtifacts bool) (bool, error) {
@@ -37,9 +33,8 @@ func (r *Reconciler) projectGenerationAllowed(ctx context.Context, projectUID st
 	if err != nil {
 		return false, err
 	}
-	if isDirectSpoke(binding) {
-		// Active direct spokes use the hub's search index for shared projects.
-		return !binding.Enabled, nil
+	if binding.IsDirectSpoke() {
+		return false, nil
 	}
 	if binding.Role == db.FederationRoleSpoke {
 		if !binding.Enabled {

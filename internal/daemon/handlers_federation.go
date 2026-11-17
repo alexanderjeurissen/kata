@@ -149,10 +149,22 @@ func registerFederationHandlers(humaAPI huma.API, cfg ServerConfig) {
 			}
 			return nil, internalAPIError(err)
 		}
+		issues := make([]db.Issue, len(res.Hits))
+		for i, hit := range res.Hits {
+			issues[i] = hit.Issue
+		}
+		rows, err := hydrateIssueOuts(ctx, cfg.DB, cfg.DefaultTimezone, in.ProjectID, issues)
+		if err != nil {
+			return nil, internalAPIError(err)
+		}
+		addIssueWebURLs(cfg, rows)
+		if err := compactIssueOuts(rows, nil); err != nil {
+			return nil, internalAPIError(err)
+		}
 		out := &api.FederationSearchResponse{}
 		out.Body.Results = make([]api.FederationSearchHit, 0, len(res.Hits))
-		for _, hit := range res.Hits {
-			out.Body.Results = append(out.Body.Results, api.FederationSearchHit{Issue: hit.Issue, WebURL: issueWebURL(cfg, hit.Issue.UID), Score: hit.Score})
+		for i, hit := range res.Hits {
+			out.Body.Results = append(out.Body.Results, api.FederationSearchHit{Issue: rows[i], Score: hit.Score})
 		}
 		return out, nil
 	})

@@ -13,6 +13,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/kata/internal/api"
 	"go.kenn.io/kata/internal/config"
 	"go.kenn.io/kata/internal/db"
 	"go.kenn.io/kata/internal/embedding"
@@ -1371,4 +1372,39 @@ func TestUnfilteredSearchNeverSetsCeilingDegraded(t *testing.T) {
 	if len(res.Hits) != 1 || res.Hits[0].Issue.Title != "target login race in the sibling project" {
 		t.Fatalf("project-scoped candidates must retrieve the sibling issue, got %q", hitTitles(res.Hits))
 	}
+}
+
+func TestHydrateRemoteHitsUsesHubSnapshot(t *testing.T) {
+	ctx := t.Context()
+	store := newReconcilerTestStore(t)
+	project, err := store.CreateProject(ctx, "shared")
+	require.NoError(t, err)
+	other, err := store.CreateProject(ctx, "other")
+	require.NoError(t, err)
+	local, _, err := store.CreateIssue(ctx, db.CreateIssueParams{ProjectID: project.ID, Title: "stale title", Author: "tester"})
+	require.NoError(t, err)
+	foreign, _, err := store.CreateIssue(ctx, db.CreateIssueParams{ProjectID: other.ID, Title: "other project", Author: "tester"})
+	require.NoError(t, err)
+	_, _, _, err = store.SoftDeleteIssue(ctx, local.ID, "tester")
+	require.NoError(t, err)
+	hubIssue := local
+	hubIssue.Title = "current hub title"
+	hubIssue.DeletedAt = nil
+	hits := []api.FederationSearchHit{
+		{Issue: api.IssueOut{Issue: hubIssue, WebURL: "https://hub.example/issue"}, Score: 0.9},
+		{Issue: api.IssueOut{Issue: foreign, Oversized: true}, Score: 0.8},
+	}
+	candidates, err := hydrateRemoteHits(ctx, store, hits, hybridParams{ProjectID: project.ID}, 10)
+	require.NoError(t, err)
+	require.Len(t, candidates, 2)
+	require.Equal(t, local.ID, candidates[0].Issue.ID)
+	require.Equal(t, "current hub title", candidates[0].Issue.Title)
+	require.Nil(t, candidates[0].Issue.DeletedAt)
+	require.False(t, candidates[0].Remote)
+	require.Zero(t, candidates[1].Issue.ID)
+	require.True(t, candidates[1].Remote)
+	require.True(t, candidates[1].Oversized)
+	hits[0].Issue.UID = "invalid"
+	_, err = hydrateRemoteHits(ctx, store, hits, hybridParams{ProjectID: project.ID}, 10)
+	require.ErrorContains(t, err, "invalid hub issue UID")
 }

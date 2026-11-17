@@ -2999,9 +2999,8 @@ func (f FederationRootKeyRepinResult) Validate() error {
 }
 
 type FederationSearchHit struct {
-	Issue  Issue   `json:"issue"`
-	Score  float64 `json:"score"`
-	WebURL *string `json:"web_url,omitempty"`
+	Issue IssueOut `json:"issue"`
+	Score float64  `json:"score"`
 }
 
 func (f FederationSearchHit) Validate() error {
@@ -6747,6 +6746,7 @@ func (r RunIssueSyncOnceResponseBody) Validate() error {
 type SearchHit struct {
 	Issue     Issue    `json:"issue"`
 	MatchedIn []string `json:"matched_in" validate:"required"`
+	Oversized *bool    `json:"oversized,omitempty"`
 
 	// Remote The issue has no local row in the searched project.
 	Remote *bool   `json:"remote,omitempty"`

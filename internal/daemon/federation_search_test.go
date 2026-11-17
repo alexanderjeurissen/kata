@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -70,7 +71,7 @@ func TestDirectSpokeSearchUsesHubResults(t *testing.T) {
 	require.NoError(t, err)
 	replica, err := spoke.DB.CreateProjectWithUID(ctx, project.Name, project.UID)
 	require.NoError(t, err)
-	_, err = spoke.DB.UpsertFederationBinding(ctx, db.FederationBinding{ProjectID: replica.ID, Role: db.FederationRoleSpoke, HubURL: hub.URL, HubProjectID: project.ID, HubProjectUID: project.UID, Actor: "tester", Enabled: true})
+	_, err = spoke.DB.UpsertFederationBinding(ctx, db.FederationBinding{ProjectID: replica.ID, Role: db.FederationRoleSpoke, HubURL: hub.URL, HubProjectID: project.ID, HubProjectUID: project.UID, Actor: "tester", Enabled: true, PushEnabled: true})
 	require.NoError(t, err)
 	events, err := hub.DB.EventsAfter(ctx, db.EventsAfterParams{ProjectID: project.ID, IssueUID: issue.UID, Types: []string{"issue.created"}, Limit: 1})
 	require.NoError(t, err)
@@ -79,7 +80,7 @@ func TestDirectSpokeSearchUsesHubResults(t *testing.T) {
 	_, err = spoke.DB.InsertRemoteEvent(ctx, replica.ID, db.RemoteEvent{EventUID: e.UID, OriginInstanceUID: e.OriginInstanceUID, ProjectUID: e.ProjectUID, ProjectName: e.ProjectName, IssueUID: e.IssueUID, RelatedIssueUID: e.RelatedIssueUID, Type: e.Type, Actor: e.Actor, HLCPhysicalMS: e.HLCPhysicalMS, HLCCounter: e.HLCCounter, ContentHash: e.ContentHash, Payload: jsontext.Value(e.Payload), CreatedAt: e.CreatedAt})
 	require.NoError(t, err)
 	require.NoError(t, spoke.DB.MaterializeFederatedProject(ctx, replica.ID))
-	grant := createClaimEnrollment(t, hub, project.ID, spoke.DB.InstanceUID(), "pull")
+	grant := createClaimEnrollment(t, hub, project.ID, spoke.DB.InstanceUID(), "pull,push")
 	require.NoError(t, config.WriteFederationCredential(replica.UID, config.FederationCredential{HubURL: hub.URL, HubProjectID: project.ID, Token: grant.Token}))
 	filteredPath := fmt.Sprintf("/api/v1/projects/%d/federation/search?q=concept&label=missing", project.ID)
 	filteredResp, filtered := envDoRaw(t, hub, http.MethodGet, filteredPath, nil, map[string]string{"Authorization": "Bearer " + grant.Token})
@@ -170,7 +171,7 @@ func TestDirectSpokeSearchUsesHubResults(t *testing.T) {
 		require.True(t, hit.Remote)
 		require.Zero(t, hit.Issue.ID)
 		require.Equal(t, replica.ID, hit.Issue.ProjectID)
-		require.Equal(t, remote.UID, hit.Issue.ShortID)
+		require.Equal(t, remote.ShortID, hit.Issue.ShortID)
 		require.Equal(t, remote.Title, hit.Issue.Title)
 		require.Equal(t, "https://tasks.example/kata?issue="+remote.UID+"#direct=1", hit.WebURL)
 	}
@@ -202,10 +203,108 @@ func TestDirectSpokeSearchUsesHubResults(t *testing.T) {
 	output, err = json.Marshal(result.StructuredContent)
 	require.NoError(t, err)
 	for _, remote := range []db.Issue{first, second} {
-		require.Contains(t, string(output), `"ref":"`+remote.UID+`"`)
+		require.Contains(t, string(output), `"ref":"`+strings.ToLower(remote.UID)+`"`)
+		require.Contains(t, string(output), `"qualified_ref":"`+project.Name+"#"+strings.ToLower(remote.UID)+`"`)
 		require.Contains(t, string(output), "https://tasks.example/kata?issue="+remote.UID)
 	}
 	require.Contains(t, string(output), `"remote":true`)
+	_, err = session.CallTool(ctx, &sdkmcp.CallToolParams{Name: "kata.load_issue_mutation", Arguments: map[string]any{}})
+	require.NoError(t, err)
+	ref := project.Name + "#" + strings.ToLower(first.UID)
+	for _, call := range []struct {
+		name string
+		args map[string]any
+	}{
+		{"kata.show", map[string]any{"ref": ref}},
+		{"kata.comment", map[string]any{"ref": ref, "body": "note", "idempotency_key": "remote-before-pull"}},
+	} {
+		result, err = session.CallTool(ctx, &sdkmcp.CallToolParams{Name: call.name, Arguments: call.args})
+		require.NoError(t, err)
+		require.True(t, result.IsError)
+	}
+	events, err = hub.DB.EventsAfter(ctx, db.EventsAfterParams{ProjectID: project.ID, IssueUID: first.UID, Types: []string{"issue.created"}, Limit: 1})
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	e = events[0]
+	_, err = spoke.DB.InsertRemoteEvent(ctx, replica.ID, db.RemoteEvent{EventUID: e.UID, OriginInstanceUID: e.OriginInstanceUID, ProjectUID: e.ProjectUID, ProjectName: e.ProjectName, IssueUID: e.IssueUID, RelatedIssueUID: e.RelatedIssueUID, Type: e.Type, Actor: e.Actor, HLCPhysicalMS: e.HLCPhysicalMS, HLCCounter: e.HLCCounter, ContentHash: e.ContentHash, Payload: jsontext.Value(e.Payload), CreatedAt: e.CreatedAt})
+	require.NoError(t, err)
+	require.NoError(t, spoke.DB.MaterializeFederatedProject(ctx, replica.ID))
+	result, err = session.CallTool(ctx, &sdkmcp.CallToolParams{Name: "kata.show", Arguments: map[string]any{"ref": ref}})
+	require.NoError(t, err)
+	require.False(t, result.IsError)
+	result, err = session.CallTool(ctx, &sdkmcp.CallToolParams{Name: "kata.comment", Arguments: map[string]any{"ref": ref, "body": "note", "idempotency_key": "remote-after-pull"}})
+	require.NoError(t, err)
+	require.False(t, result.IsError, "%+v", result.Content)
+
+	var bigBody, oversized db.Issue
+	for i := range 197 {
+		created, _, err := hub.DB.CreateIssue(ctx, db.CreateIssueParams{ProjectID: project.ID, Title: fmt.Sprintf("large corpus %03d", i), Author: "tester"})
+		require.NoError(t, err)
+		if i == 0 {
+			bigBody = created
+		}
+		if i == 1 {
+			oversized = created
+		}
+	}
+	_, err = idx.RefreshMirror(ctx, hub.DB)
+	require.NoError(t, err)
+	_, err = idx.Fill(ctx, key, func(_ context.Context, inputs []string) ([][]float32, error) {
+		vectors := make([][]float32, len(inputs))
+		for i := range vectors {
+			vectors[i] = []float32{1, 0}
+		}
+		return vectors, nil
+	}, 0, nil, nil)
+	require.NoError(t, err)
+	_, _, _, err = hub.DB.EditIssue(ctx, db.EditIssueParams{IssueID: bigBody.ID, Body: new(strings.Repeat("x", 9<<20)), Actor: "tester"})
+	require.NoError(t, err)
+	_, _, _, err = hub.DB.EditIssue(ctx, db.EditIssueParams{IssueID: oversized.ID, Title: new(strings.Repeat("z", 65<<10)), Actor: "tester"})
+	require.NoError(t, err)
+	_, err = hub.DB.AddLabel(ctx, oversized.ID, "oversized", "tester")
+	require.NoError(t, err)
+	path := fmt.Sprintf("/api/v1/projects/%d/federation/search?q=concept&limit=200", project.ID)
+	resp, raw = envDoRaw(t, hub, http.MethodGet, path, nil, map[string]string{"Authorization": "Bearer " + grant.Token})
+	require.Equal(t, http.StatusOK, resp.StatusCode, string(raw))
+	var hubRows struct {
+		Results []struct {
+			Issue struct {
+				UID       string `json:"uid"`
+				WebURL    string `json:"web_url"`
+				Oversized bool   `json:"oversized"`
+			} `json:"issue"`
+		} `json:"results"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &hubRows))
+	require.Len(t, hubRows.Results, 200)
+	resp, raw = envGetRaw(t, spoke, fmt.Sprintf("/api/v1/projects/%d/search?q=concept&mode=semantic&limit=200", replica.ID))
+	require.Equal(t, http.StatusOK, resp.StatusCode, string(raw))
+	var spokeRows struct {
+		Results []struct {
+			Issue     db.Issue `json:"issue"`
+			Oversized bool     `json:"oversized"`
+			WebURL    string   `json:"web_url"`
+		} `json:"results"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &spokeRows))
+	require.Len(t, spokeRows.Results, 200)
+	oversizedFound := false
+	for i, row := range hubRows.Results {
+		require.Equal(t, row.Issue.UID, spokeRows.Results[i].Issue.UID)
+		if row.Issue.UID == oversized.UID {
+			oversizedFound = true
+			require.True(t, row.Issue.Oversized)
+			require.True(t, spokeRows.Results[i].Oversized)
+			require.Equal(t, row.Issue.WebURL, spokeRows.Results[i].WebURL)
+		}
+	}
+	require.True(t, oversizedFound)
+	result, err = session.CallTool(ctx, &sdkmcp.CallToolParams{Name: "kata.search", Arguments: map[string]any{"query": "concept", "project": project.Name, "mode": "semantic", "labels": []string{"oversized"}}})
+	require.NoError(t, err)
+	require.False(t, result.IsError)
+	output, err = json.Marshal(result.StructuredContent)
+	require.NoError(t, err)
+	require.Contains(t, string(output), `"oversized":true`)
 }
 
 func TestDirectSpokeSearchReportsUnavailableHub(t *testing.T) {
@@ -216,6 +315,16 @@ func TestDirectSpokeSearchReportsUnavailableHub(t *testing.T) {
 	setClaimBindingHubURL(t, spoke, replica.ID, "http://127.0.0.1:1")
 	path := fmt.Sprintf("/api/v1/projects/%d/search?q=claim", replica.ID)
 	resp, body := envGetRaw(t, spoke, path+"&mode=semantic")
+	require.Equal(t, http.StatusServiceUnavailable, resp.StatusCode, string(body))
+	resp, body = envGetRaw(t, spoke, path)
+	require.Equal(t, http.StatusOK, resp.StatusCode, string(body))
+	require.Contains(t, string(body), `"degraded":true`)
+	binding, err := spoke.DB.FederationBindingByProject(t.Context(), replica.ID)
+	require.NoError(t, err)
+	binding.Enabled = false
+	_, err = spoke.DB.UpsertFederationBinding(t.Context(), binding)
+	require.NoError(t, err)
+	resp, body = envGetRaw(t, spoke, path+"&mode=semantic")
 	require.Equal(t, http.StatusServiceUnavailable, resp.StatusCode, string(body))
 	resp, body = envGetRaw(t, spoke, path)
 	require.Equal(t, http.StatusOK, resp.StatusCode, string(body))

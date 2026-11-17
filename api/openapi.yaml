@@ -2941,12 +2941,10 @@ components:
       additionalProperties: true
       properties:
         issue:
-          $ref: "#/components/schemas/Issue"
+          $ref: "#/components/schemas/IssueOut"
         score:
           format: double
           type: number
-        web_url:
-          type: string
       required:
         - issue
         - score
@@ -6677,6 +6675,8 @@ components:
           items:
             type: string
           type: array
+        oversized:
+          type: boolean
         remote:
           description: The issue has no local row in the searched project.
           type: boolean

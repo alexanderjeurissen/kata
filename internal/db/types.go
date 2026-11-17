@@ -153,6 +153,10 @@ type FederationBinding struct {
 	LastSyncAt    *time.Time
 }
 
+func (b FederationBinding) IsDirectSpoke() bool {
+	return b.Role == FederationRoleSpoke && b.RelayConfig == nil
+}
+
 // RebindFederationBindingParams conditionally moves one spoke binding to a
 // replacement endpoint without changing its hub identity or sync state.
 type RebindFederationBindingParams struct {
@@ -576,6 +580,7 @@ type SearchCandidate struct {
 	MatchedIn []string `json:"matched_in"`
 	Remote    bool     `json:"-"`
 	Hub       bool     `json:"-"`
+	Oversized bool     `json:"-"`
 	WebURL    string   `json:"-"`
 }
 

@@ -85,7 +85,7 @@ func compactIssueOuts(outs []api.IssueOut, filters []db.MetaFilter) error {
 		if len(encoded) <= compactRowMaxBytes {
 			continue
 		}
-		stub := api.IssueOut{QualifiedID: out.QualifiedID, Oversized: true}
+		stub := api.IssueOut{QualifiedID: out.QualifiedID, WebURL: out.WebURL, Oversized: true}
 		stub.ID, stub.UID, stub.ProjectID, stub.ProjectUID, stub.ShortID = out.ID, out.UID, out.ProjectID, out.ProjectUID, out.ShortID
 		stub.Status, stub.Revision, stub.CreatedAt, stub.UpdatedAt = out.Status, out.Revision, out.CreatedAt, out.UpdatedAt
 		outs[i] = stub

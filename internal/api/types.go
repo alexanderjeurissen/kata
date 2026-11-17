@@ -1470,6 +1470,7 @@ type SearchRequest struct {
 // cosine similarity (semantic). MatchedIn lists the contributing sources: FTS
 // column names for the lexical leg plus "semantic" when the vector leg matched.
 type SearchHit struct {
+	Oversized bool     `json:"oversized,omitempty,omitzero"`
 	WebURL    string   `json:"web_url,omitempty" doc:"Browser URL for this issue in the owning daemon."`
 	Remote    bool     `json:"remote,omitzero" doc:"The issue has no local row in the searched project."`
 	Issue     db.Issue `json:"issue"`
