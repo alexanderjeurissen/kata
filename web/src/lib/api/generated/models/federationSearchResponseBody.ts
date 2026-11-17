@@ -4,6 +4,7 @@
 import type { FederationSearchHit } from './federationSearchHit.ts'
 
 export interface FederationSearchResponseBody {
+  lexical: FederationSearchHit[]
   results: FederationSearchHit[]
   [key: string]: unknown
 }

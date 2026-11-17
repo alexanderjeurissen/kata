@@ -2883,12 +2883,17 @@ components:
       type: object
     FederationSearchResponseBody:
       properties:
+        lexical:
+          items:
+            $ref: "#/components/schemas/FederationSearchHit"
+          type: array
         results:
           items:
             $ref: "#/components/schemas/FederationSearchHit"
           type: array
       required:
         - results
+        - lexical
       type: object
     FederationSpokeNameOut:
       properties:
@@ -9948,6 +9953,13 @@ paths:
         - explode: true
           in: query
           name: exclude_label
+          schema:
+            items:
+              type: string
+            type: array
+        - explode: true
+          in: query
+          name: lexical_uid
           schema:
             items:
               type: string

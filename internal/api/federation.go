@@ -16,6 +16,7 @@ type FederationSearchRequest struct {
 	Status        string   `query:"status,omitempty" enum:"open,closed"`
 	Labels        []string `query:"label,explode"`
 	ExcludeLabels []string `query:"exclude_label,explode"`
+	LexicalUIDs   []string `query:"lexical_uid,explode"`
 }
 
 type FederationSearchHit struct {
@@ -28,6 +29,7 @@ type FederationSearchHit struct {
 type FederationSearchResponse struct {
 	Body struct {
 		Results []FederationSearchHit `json:"results"`
+		Lexical []FederationSearchHit `json:"lexical"`
 	}
 }
 

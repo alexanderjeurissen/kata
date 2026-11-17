@@ -28,7 +28,7 @@ type hybridParams struct {
 	ExcludeLabels   []string
 	AllowedIssueIDs []int64
 	IssueScope      *db.APITokenScope
-	RemoteVector    func(context.Context, hybridParams, int) ([]db.SearchCandidate, bool, error)
+	RemoteVector    func(context.Context, hybridParams, int, []db.SearchCandidate) ([]db.SearchCandidate, []db.SearchCandidate, bool, error)
 }
 
 type hybridResult struct {
@@ -106,9 +106,13 @@ func hybridSearch(ctx context.Context, store db.Storage, idx *vector.Index, emb 
 	lexErrCh := make(chan error, 1)
 	if mode != modeSemantic {
 		go func() {
+			status, labels, exclude := p.Status, p.Labels, p.ExcludeLabels
+			if p.RemoteVector != nil && mode == modeHybrid {
+				status, labels, exclude = "", nil, nil
+			}
 			c, e := store.SearchFTS(ctx, db.SearchFTSParams{
 				ProjectID: p.ProjectID, Query: p.Query, Limit: fetch, IncludeDeleted: p.IncludeDeleted,
-				Labels: p.Labels, ExcludeLabels: p.ExcludeLabels, Status: p.Status,
+				Labels: labels, ExcludeLabels: exclude, Status: status,
 				AllowedIssueIDs: p.AllowedIssueIDs,
 				IssueScope:      p.IssueScope,
 			})
@@ -119,13 +123,24 @@ func hybridSearch(ctx context.Context, store db.Storage, idx *vector.Index, emb 
 		lexErrCh <- nil
 	}
 
+	// The hub needs lexical UIDs to apply its current state and filters.
+	if p.RemoteVector != nil {
+		if e := <-lexErrCh; e != nil {
+			return hybridResult{}, &modeError{status: 500, msg: e.Error()}
+		}
+		lexErrCh <- nil
+	}
 	// Vector leg.
 	var vector []db.SearchCandidate
 	var vecBounded bool
 	var vecErr error
 	if mode == modeHybrid || mode == modeSemantic {
 		if p.RemoteVector != nil {
-			vector, vecBounded, vecErr = p.RemoteVector(ctx, p, fetch)
+			var hubLexical []db.SearchCandidate
+			vector, hubLexical, vecBounded, vecErr = p.RemoteVector(ctx, p, fetch, lexical)
+			if vecErr == nil && mode == modeHybrid {
+				lexical = hubLexical
+			}
 		} else {
 			vector, vecBounded, vecErr = runVectorLeg(ctx, store, idx, emb, p, fetch)
 		}
@@ -144,6 +159,12 @@ func hybridSearch(ctx context.Context, store db.Storage, idx *vector.Index, emb 
 				status = 400
 			}
 			return hybridResult{}, &modeError{status: status, msg: vecErr.Error()}
+		}
+		if p.RemoteVector != nil {
+			lexical, err = store.SearchFTS(ctx, db.SearchFTSParams{ProjectID: p.ProjectID, Query: p.Query, Limit: fetch, IncludeDeleted: p.IncludeDeleted, Labels: p.Labels, ExcludeLabels: p.ExcludeLabels, Status: p.Status, AllowedIssueIDs: p.AllowedIssueIDs, IssueScope: p.IssueScope})
+			if err != nil {
+				return hybridResult{}, &modeError{status: 500, msg: err.Error()}
+			}
 		}
 		return hybridResult{
 			Mode: modeLexical, Degraded: true, DegradedReason: vecErr.Error(),

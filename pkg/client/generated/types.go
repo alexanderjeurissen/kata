@@ -3019,11 +3019,22 @@ func (f FederationSearchHit) Validate() error {
 }
 
 type FederationSearchResponseBody struct {
+	Lexical []FederationSearchHit `json:"lexical" validate:"required"`
 	Results []FederationSearchHit `json:"results" validate:"required"`
 }
 
 func (f FederationSearchResponseBody) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(f.Lexical, "required"); err != nil {
+		errors = errors.Append("Lexical", err)
+	}
+	for i, item := range f.Lexical {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Lexical[%d]", i), err)
+			}
+		}
+	}
 	if err := typesValidator.Var(f.Results, "required"); err != nil {
 		errors = errors.Append("Results", err)
 	}

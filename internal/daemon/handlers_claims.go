@@ -826,36 +826,37 @@ type claimHubClient struct {
 const hitEnvelopeBytes = 4096
 const responseEnvelopeBytes = 1024
 
-func (c *claimHubClient) SearchShared(ctx context.Context, projectID int64, p hybridParams, limit int) ([]api.FederationSearchHit, error) {
+func (c *claimHubClient) SearchShared(ctx context.Context, projectID int64, p hybridParams, limit int, uids []string) ([]api.FederationSearchHit, []api.FederationSearchHit, error) {
 	if c.transportErr != nil {
-		return nil, c.transportErr
+		return nil, nil, c.transportErr
 	}
 	if limit <= 0 {
 		limit = 20
 	}
 	limit = min(limit, fetchCap)
-	maxBytes := int64(limit*(compactRowMaxBytes+hitEnvelopeBytes) + responseEnvelopeBytes)
+	maxBytes := int64((limit+len(uids))*(compactRowMaxBytes+hitEnvelopeBytes) + responseEnvelopeBytes)
 	client, err := generated.NewDefaultClient(c.baseURL, runtime.WithHTTPClient(claimHubDoer{client: c.client, successBodyLimit: maxBytes}))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	count := int64(limit)
-	query := &generated.SearchFederationProjectQuery{Q: p.Query, Limit: &count, Label: p.Labels, ExcludeLabel: p.ExcludeLabels}
+	query := &generated.SearchFederationProjectQuery{Q: p.Query, Limit: &count, Label: p.Labels, ExcludeLabel: p.ExcludeLabels, LexicalUID: uids}
 	if p.Status != "" {
 		status := generated.SearchFederationProjectQueryStatus(p.Status)
 		query.Status = &status
 	}
 	response, err := client.SearchFederationProjectWithResponse(ctx, &generated.SearchFederationProjectRequestOptions{PathParams: &generated.SearchFederationProjectPath{ProjectID: projectID}, Query: query})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	var body struct {
 		Results []api.FederationSearchHit `json:"results"`
+		Lexical []api.FederationSearchHit `json:"lexical"`
 	}
 	if err := json.Unmarshal(response.Body, &body); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return body.Results, nil
+	return body.Results, body.Lexical, nil
 }
 
 type claimHubStatusError struct {

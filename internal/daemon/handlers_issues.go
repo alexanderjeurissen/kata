@@ -85,12 +85,14 @@ func compactIssueOuts(outs []api.IssueOut, filters []db.MetaFilter) error {
 		if len(encoded) <= compactRowMaxBytes {
 			continue
 		}
-		stub := api.IssueOut{QualifiedID: out.QualifiedID, Oversized: true}
-		stub.ID, stub.UID, stub.ProjectID, stub.ProjectUID, stub.ShortID = out.ID, out.UID, out.ProjectID, out.ProjectUID, out.ShortID
-		stub.Status, stub.Revision, stub.CreatedAt, stub.UpdatedAt = out.Status, out.Revision, out.CreatedAt, out.UpdatedAt
+		stub := api.IssueOut{Issue: oversizedIssue(out.Issue), QualifiedID: out.QualifiedID, Oversized: true}
 		outs[i] = stub
 	}
 	return nil
+}
+
+func oversizedIssue(issue db.Issue) db.Issue {
+	return db.Issue{ID: issue.ID, UID: issue.UID, ProjectID: issue.ProjectID, ProjectUID: issue.ProjectUID, ShortID: issue.ShortID, Status: issue.Status, Revision: issue.Revision, CreatedAt: issue.CreatedAt, UpdatedAt: issue.UpdatedAt}
 }
 
 func parseMetaFilters(raw []string) ([]db.MetaFilter, error) {

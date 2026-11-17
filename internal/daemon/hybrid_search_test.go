@@ -279,9 +279,9 @@ func TestHybridSearchScopedRemoteUsesLexical(t *testing.T) {
 	require.NoError(t, err)
 	issue, _, err := store.CreateIssue(ctx, db.CreateIssueParams{ProjectID: project.ID, Title: "delegated login race", Author: "member"})
 	require.NoError(t, err)
-	remote := func(context.Context, hybridParams, int) ([]db.SearchCandidate, bool, error) {
+	remote := func(context.Context, hybridParams, int, []db.SearchCandidate) ([]db.SearchCandidate, []db.SearchCandidate, bool, error) {
 		t.Fatal("issue-scoped search must not call the hub")
-		return nil, false, nil
+		return nil, nil, false, nil
 	}
 	params := hybridParams{ProjectID: project.ID, Query: "login", Limit: 10, Requested: "semantic", AllowedIssueIDs: []int64{issue.ID}, RemoteVector: remote}
 	_, err = hybridSearch(ctx, store, nil, nil, params)

@@ -143,6 +143,9 @@ func registerFederationHandlers(humaAPI huma.API, cfg ServerConfig) {
 			limit = 20
 		}
 		limit = min(limit, fetchCap)
+		if len(in.LexicalUIDs) > fetchCap {
+			return nil, api.NewError(400, "validation", "too many lexical issue UIDs", "", nil)
+		}
 		res, err := hybridSearch(ctx, cfg.DB, cfg.VectorIndex, cfg.Embedder, hybridParams{ProjectID: in.ProjectID, Query: in.Query, Limit: limit, Requested: "semantic", Status: in.Status, Labels: in.Labels, ExcludeLabels: in.ExcludeLabels})
 		if err != nil {
 			if me, ok := errors.AsType[*modeError](err); ok {
@@ -151,26 +154,62 @@ func registerFederationHandlers(humaAPI huma.API, cfg ServerConfig) {
 			return nil, internalAPIError(err)
 		}
 		out := &api.FederationSearchResponse{}
-		out.Body.Results = make([]api.FederationSearchHit, 0, len(res.Hits))
-		for _, hit := range res.Hits {
-			issue := hit.Issue
+		makeHit := func(issue db.Issue, score float64) (api.FederationSearchHit, error) {
 			encoded, err := json.Marshal(issue)
 			if err != nil {
-				return nil, internalAPIError(err)
+				return api.FederationSearchHit{}, err
 			}
-			row := api.FederationSearchHit{Issue: issue, Score: hit.Score, WebURL: issueWebURL(cfg, issue.UID)}
+			row := api.FederationSearchHit{Issue: issue, Score: score, WebURL: issueWebURL(cfg, issue.UID)}
 			if len(encoded) > compactRowMaxBytes {
-				row.Issue = db.Issue{ID: issue.ID, UID: issue.UID, ProjectID: issue.ProjectID, ProjectUID: issue.ProjectUID, ShortID: issue.ShortID, Status: issue.Status, Revision: issue.Revision, CreatedAt: issue.CreatedAt, UpdatedAt: issue.UpdatedAt}
+				row.Issue = oversizedIssue(issue)
 				row.Oversized = true
 			}
 			encoded, err = json.Marshal(row)
 			if err != nil {
-				return nil, internalAPIError(err)
+				return api.FederationSearchHit{}, err
 			}
 			if len(encoded) > compactRowMaxBytes+hitEnvelopeBytes {
-				return nil, internalAPIError(fmt.Errorf("hub search hit exceeds response limit"))
+				return api.FederationSearchHit{}, fmt.Errorf("hub search hit exceeds response limit")
+			}
+			return row, nil
+		}
+		out.Body.Results = make([]api.FederationSearchHit, 0, len(res.Hits))
+		for _, hit := range res.Hits {
+			row, err := makeHit(hit.Issue, hit.Score)
+			if err != nil {
+				return nil, internalAPIError(err)
 			}
 			out.Body.Results = append(out.Body.Results, row)
+		}
+		out.Body.Lexical = make([]api.FederationSearchHit, 0, len(in.LexicalUIDs))
+		issues, err := cfg.DB.IssuesByUIDs(ctx, in.LexicalUIDs, db.IncludeDeletedNo)
+		if err != nil {
+			return nil, internalAPIError(err)
+		}
+		var ids []int64
+		for _, issue := range issues {
+			if issue.ProjectID == in.ProjectID {
+				ids = append(ids, issue.ID)
+			}
+		}
+		labels := newLabelFilter(in.Labels, in.ExcludeLabels)
+		var byIssue map[int64][]string
+		if !labels.empty() && len(ids) > 0 {
+			byIssue, err = cfg.DB.LabelsByIssues(ctx, in.ProjectID, ids)
+			if err != nil {
+				return nil, internalAPIError(err)
+			}
+		}
+		for _, uid := range in.LexicalUIDs {
+			issue, ok := issues[uid]
+			if !ok || issue.ProjectID != in.ProjectID || (in.Status != "" && issue.Status != in.Status) || !labels.matches(byIssue[issue.ID]) {
+				continue
+			}
+			row, err := makeHit(issue, 0)
+			if err != nil {
+				return nil, internalAPIError(err)
+			}
+			out.Body.Lexical = append(out.Body.Lexical, row)
 		}
 		return out, nil
 	})

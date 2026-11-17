@@ -254,6 +254,7 @@ type SearchFederationProjectQuery struct {
 	Status       *SearchFederationProjectQueryStatus `json:"status,omitempty"`
 	Label        []string                            `json:"label,omitempty"`
 	ExcludeLabel []string                            `json:"exclude_label,omitempty"`
+	LexicalUID   []string                            `json:"lexical_uid,omitempty"`
 }
 
 func (s SearchFederationProjectQuery) Validate() error {

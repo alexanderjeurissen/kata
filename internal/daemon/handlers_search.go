@@ -89,19 +89,38 @@ func registerSearchHandlers(humaAPI huma.API, cfg ServerConfig) {
 				IssueScope: issueScopeFromContext(ctx),
 			}
 			if direct {
-				params.RemoteVector = func(ctx context.Context, p hybridParams, fetch int) ([]db.SearchCandidate, bool, error) {
+				params.RemoteVector = func(ctx context.Context, p hybridParams, fetch int, lexical []db.SearchCandidate) ([]db.SearchCandidate, []db.SearchCandidate, bool, error) {
 					ctx, cancel := context.WithTimeout(ctx, queryEmbedTimeout)
 					defer cancel()
 					client, cred, err := claimForwardClient(ctx, cfg, binding)
 					if err != nil {
-						return nil, false, err
+						return nil, nil, false, err
 					}
-					hits, err := client.SearchShared(ctx, cred.HubProjectID, p, fetch)
+					uids := make([]string, 0, len(lexical))
+					for _, hit := range lexical {
+						uids = append(uids, hit.Issue.UID)
+					}
+					hits, matched, err := client.SearchShared(ctx, cred.HubProjectID, p, fetch, uids)
 					if err != nil {
-						return nil, false, err
+						return nil, nil, false, err
 					}
 					candidates, err := hydrateRemoteHits(ctx, cfg.DB, hits, p, fetch)
-					return candidates, false, err
+					if err != nil {
+						return nil, nil, false, err
+					}
+					current, err := hydrateRemoteHits(ctx, cfg.DB, matched, p, fetch)
+					byUID := make(map[string]db.SearchCandidate, len(current))
+					for _, hit := range current {
+						byUID[hit.Issue.UID] = hit
+					}
+					var hubLexical []db.SearchCandidate
+					for _, hit := range lexical {
+						if row, ok := byUID[hit.Issue.UID]; ok {
+							row.MatchedIn = hit.MatchedIn
+							hubLexical = append(hubLexical, row)
+						}
+					}
+					return candidates, hubLexical, false, err
 				}
 			}
 			res, err = hybridSearch(ctx, cfg.DB, cfg.VectorIndex, cfg.Embedder, params)

@@ -215,6 +215,12 @@ func TestDirectSpokeSearchUsesHubResults(t *testing.T) {
 	require.True(t, found)
 	_, _, _, err = hub.DB.CloseIssue(ctx, issue.ID, "done", "tester", "", nil)
 	require.NoError(t, err)
+	resp, raw = envGetRaw(t, spoke, fmt.Sprintf("/api/v1/projects/%d/search?q=claim&status=open", replica.ID))
+	require.Equal(t, http.StatusOK, resp.StatusCode, string(raw))
+	require.NoError(t, json.Unmarshal(raw, &body))
+	for _, hit := range body.Results {
+		require.NotEqual(t, issue.UID, hit.Issue.UID, "a hub-closed issue must not appear in open results")
+	}
 	resp, raw = envGetRaw(t, spoke, fmt.Sprintf("/api/v1/projects/%d/search?q=concept&mode=semantic&status=closed&label=hub-label", replica.ID))
 	require.Equal(t, http.StatusOK, resp.StatusCode, string(raw))
 	require.NoError(t, json.Unmarshal(raw, &body))
@@ -354,6 +360,40 @@ func TestDirectSpokeSearchUsesHubResults(t *testing.T) {
 	output, err = json.Marshal(result.StructuredContent)
 	require.NoError(t, err)
 	require.Contains(t, string(output), `"oversized":true`)
+
+	// This issue is created after the index fill, so only the lexical leg can
+	// find it. Its local copy remains open and unlabeled after the hub changes it.
+	late, _, err := hub.DB.CreateIssue(ctx, db.CreateIssueParams{ProjectID: project.ID, Title: "lexical needle", Body: "old body", Author: "tester"})
+	require.NoError(t, err)
+	events, err = hub.DB.EventsAfter(ctx, db.EventsAfterParams{ProjectID: project.ID, IssueUID: late.UID, Types: []string{"issue.created"}, Limit: 1})
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	e = events[0]
+	_, err = spoke.DB.InsertRemoteEvent(ctx, replica.ID, db.RemoteEvent{EventUID: e.UID, OriginInstanceUID: e.OriginInstanceUID, ProjectUID: e.ProjectUID, ProjectName: e.ProjectName, IssueUID: e.IssueUID, RelatedIssueUID: e.RelatedIssueUID, Type: e.Type, Actor: e.Actor, HLCPhysicalMS: e.HLCPhysicalMS, HLCCounter: e.HLCCounter, ContentHash: e.ContentHash, Payload: jsontext.Value(e.Payload), CreatedAt: e.CreatedAt})
+	require.NoError(t, err)
+	require.NoError(t, spoke.DB.MaterializeFederatedProject(ctx, replica.ID))
+	lateLocal, err := spoke.DB.IssueByUID(ctx, late.UID, db.IncludeDeletedNo)
+	require.NoError(t, err)
+	_, _, _, err = hub.DB.EditIssue(ctx, db.EditIssueParams{IssueID: late.ID, Title: new("current title"), Body: new("current body"), Actor: "tester"})
+	require.NoError(t, err)
+	_, _, _, err = hub.DB.CloseIssue(ctx, late.ID, "done", "tester", "", nil)
+	require.NoError(t, err)
+	_, err = hub.DB.AddLabel(ctx, late.ID, "current-label", "tester")
+	require.NoError(t, err)
+	resp, raw = envGetRaw(t, spoke, fmt.Sprintf("/api/v1/projects/%d/search?q=needle&status=closed&label=current-label", replica.ID))
+	require.Equal(t, http.StatusOK, resp.StatusCode, string(raw))
+	require.NoError(t, json.Unmarshal(raw, &body))
+	require.Len(t, body.Results, 1)
+	require.Equal(t, lateLocal.ID, body.Results[0].Issue.ID)
+	require.Equal(t, "current title", body.Results[0].Issue.Title)
+	require.Equal(t, "current body", body.Results[0].Issue.Body)
+	require.Equal(t, "closed", body.Results[0].Issue.Status)
+	resp, raw = envGetRaw(t, spoke, fmt.Sprintf("/api/v1/projects/%d/search?q=needle&exclude_label=current-label", replica.ID))
+	require.Equal(t, http.StatusOK, resp.StatusCode, string(raw))
+	require.NoError(t, json.Unmarshal(raw, &body))
+	for _, hit := range body.Results {
+		require.NotEqual(t, late.UID, hit.Issue.UID)
+	}
 }
 
 func TestDirectSpokeSearchReportsUnavailableHub(t *testing.T) {
