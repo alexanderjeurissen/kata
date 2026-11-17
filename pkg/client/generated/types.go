@@ -3020,6 +3020,7 @@ func (f FederationSearchHit) Validate() error {
 }
 
 type FederationSearchResponseBody struct {
+	Bounded bool                  `json:"bounded"`
 	Lexical []FederationSearchHit `json:"lexical" validate:"required"`
 	Results []FederationSearchHit `json:"results" validate:"required"`
 }

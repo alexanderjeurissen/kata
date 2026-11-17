@@ -22,7 +22,7 @@ func TestSearchSharedRequestsLexicalForHybridOnly(t *testing.T) {
 	t.Cleanup(server.Close)
 	client := claimHubClient{baseURL: server.URL, client: server.Client()}
 	for _, mode := range []string{"semantic", "hybrid", "auto"} {
-		_, _, err := client.SearchShared(t.Context(), 1, hybridParams{Query: mode, Requested: mode}, 20)
+		_, _, _, err := client.SearchShared(t.Context(), 1, hybridParams{Query: mode, Requested: mode}, 20)
 		require.NoError(t, err)
 	}
 }
@@ -44,7 +44,7 @@ func TestSearchSharedBoundsHubResponse(t *testing.T) {
 			body := &bridgeTrackedResponseBody{Reader: reader}
 			transport := &bridgeResponseTransport{body: body, status: http.StatusOK, length: tc.length}
 			client := claimHubClient{baseURL: "https://hub.example", client: &http.Client{Transport: transport}}
-			hits, _, err := client.SearchShared(t.Context(), 1, hybridParams{Query: "test"}, 20)
+			hits, _, _, err := client.SearchShared(t.Context(), 1, hybridParams{Query: "test"}, 20)
 			if tc.wantError {
 				require.Error(t, err)
 				if tc.length > 0 {

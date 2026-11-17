@@ -579,3 +579,147 @@ func TestDirectSpokeSearchReadonlyRequiresAuthentication(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode, string(body))
 	require.Contains(t, string(body), `"mode":"lexical"`)
 }
+
+func TestDirectSpokeSearchFilteredSemanticAtHubCeiling(t *testing.T) {
+	ctx := t.Context()
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var input struct {
+			Input []string `json:"input"`
+		}
+		require.NoError(t, json.UnmarshalRead(r.Body, &input))
+		data := make([]map[string]any, len(input.Input))
+		for i := range data {
+			data[i] = map[string]any{"embedding": []float32{1, 0}}
+		}
+		require.NoError(t, json.MarshalWrite(w, map[string]any{"data": data}))
+	}))
+	t.Cleanup(provider.Close)
+	emb, err := embedding.New(embedding.Config{BaseURL: provider.URL, Model: "example", Dims: 2})
+	require.NoError(t, err)
+	idx, err := vector.Open(ctx, filepath.Join(t.TempDir(), "vectors.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, idx.Close()) })
+	hub := testenv.New(t, func(cfg *daemon.ServerConfig) { cfg.Embedder, cfg.VectorIndex = emb, idx })
+	project, _ := createClaimHubIssue(t, hub)
+	for i := range 3 {
+		issue, _, err := hub.DB.CreateIssue(ctx, db.CreateIssueParams{ProjectID: project.ID, Title: fmt.Sprintf("survivor %d", i), Author: "tester"})
+		require.NoError(t, err)
+		_, err = hub.DB.AddLabel(ctx, issue.ID, "bug", "tester")
+		require.NoError(t, err)
+	}
+	for i := range 1001 {
+		_, _, err := hub.DB.CreateIssue(ctx, db.CreateIssueParams{ProjectID: project.ID, Title: fmt.Sprintf("distractor %d", i), Author: "tester"})
+		require.NoError(t, err)
+	}
+	_, err = idx.RefreshMirror(ctx, hub.DB)
+	require.NoError(t, err)
+	key := emb.Generation().Fingerprint()
+	require.NoError(t, idx.EnsureBuilding(ctx, key, emb.Generation()))
+	_, err = idx.Fill(ctx, key, func(_ context.Context, inputs []string) ([][]float32, error) {
+		vectors := make([][]float32, len(inputs))
+		for i, input := range inputs {
+			vectors[i] = []float32{0.9, 0.43589}
+			if strings.HasPrefix(input, "survivor") {
+				vectors[i] = []float32{1, 0}
+			}
+		}
+		return vectors, nil
+	}, 0, nil, nil)
+	require.NoError(t, err)
+	require.NoError(t, idx.CutOver(ctx, key))
+	spoke := testenv.New(t)
+	replica, err := spoke.DB.CreateProjectWithUID(ctx, project.Name, project.UID)
+	require.NoError(t, err)
+	_, err = spoke.DB.UpsertFederationBinding(ctx, db.FederationBinding{ProjectID: replica.ID, Role: db.FederationRoleSpoke, HubURL: hub.URL, HubProjectID: project.ID, HubProjectUID: project.UID, Actor: "tester", Enabled: true})
+	require.NoError(t, err)
+	grant := createClaimEnrollment(t, hub, project.ID, spoke.DB.InstanceUID(), "pull")
+	require.NoError(t, config.WriteFederationCredential(replica.UID, config.FederationCredential{HubURL: hub.URL, HubProjectID: project.ID, Token: grant.Token}))
+	resp, raw := envGetRaw(t, spoke, fmt.Sprintf("/api/v1/projects/%d/search?q=concept&mode=semantic&label=bug&limit=3", replica.ID))
+	require.Equal(t, http.StatusOK, resp.StatusCode, string(raw))
+	var result struct {
+		Results []struct {
+			Issue db.Issue `json:"issue"`
+		} `json:"results"`
+		Degraded bool `json:"degraded"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &result))
+	require.Len(t, result.Results, 3)
+	require.True(t, result.Degraded)
+	resp, raw = envGetRaw(t, spoke, fmt.Sprintf("/api/v1/projects/%d/search?q=concept&label=bug&limit=5", replica.ID))
+	require.Equal(t, http.StatusOK, resp.StatusCode, string(raw))
+	require.NoError(t, json.Unmarshal(raw, &result))
+	require.Len(t, result.Results, 3)
+	require.True(t, result.Degraded)
+	resp, raw = envGetRaw(t, spoke, fmt.Sprintf("/api/v1/projects/%d/search?q=concept&mode=hybrid&label=bug&limit=5", replica.ID))
+	require.Equal(t, http.StatusServiceUnavailable, resp.StatusCode, string(raw))
+}
+
+func TestDirectSpokeSearchIncludesDeletedHubWordMatch(t *testing.T) {
+	ctx := t.Context()
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var input struct {
+			Input []string `json:"input"`
+		}
+		require.NoError(t, json.UnmarshalRead(r.Body, &input))
+		data := make([]map[string]any, len(input.Input))
+		for i := range data {
+			data[i] = map[string]any{"embedding": []float32{1, 0}}
+		}
+		require.NoError(t, json.MarshalWrite(w, map[string]any{"data": data}))
+	}))
+	t.Cleanup(provider.Close)
+	emb, err := embedding.New(embedding.Config{BaseURL: provider.URL, Model: "example", Dims: 2})
+	require.NoError(t, err)
+	idx, err := vector.Open(ctx, filepath.Join(t.TempDir(), "vectors.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, idx.Close()) })
+	hub := testenv.New(t, func(cfg *daemon.ServerConfig) { cfg.Embedder, cfg.VectorIndex = emb, idx })
+	project, issue := createClaimHubIssue(t, hub)
+	_, err = idx.RefreshMirror(ctx, hub.DB)
+	require.NoError(t, err)
+	key := emb.Generation().Fingerprint()
+	require.NoError(t, idx.EnsureBuilding(ctx, key, emb.Generation()))
+	_, err = idx.Fill(ctx, key, func(_ context.Context, inputs []string) ([][]float32, error) {
+		vectors := make([][]float32, len(inputs))
+		for i := range vectors {
+			vectors[i] = []float32{1, 0}
+		}
+		return vectors, nil
+	}, 0, nil, nil)
+	require.NoError(t, err)
+	require.NoError(t, idx.CutOver(ctx, key))
+	spoke := testenv.New(t)
+	replica, err := spoke.DB.CreateProjectWithUID(ctx, project.Name, project.UID)
+	require.NoError(t, err)
+	_, err = spoke.DB.UpsertFederationBinding(ctx, db.FederationBinding{ProjectID: replica.ID, Role: db.FederationRoleSpoke, HubURL: hub.URL, HubProjectID: project.ID, HubProjectUID: project.UID, Actor: "tester", Enabled: true})
+	require.NoError(t, err)
+	events, err := hub.DB.EventsAfter(ctx, db.EventsAfterParams{ProjectID: project.ID, IssueUID: issue.UID, Types: []string{"issue.created"}, Limit: 1})
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	e := events[0]
+	_, err = spoke.DB.InsertRemoteEvent(ctx, replica.ID, db.RemoteEvent{EventUID: e.UID, OriginInstanceUID: e.OriginInstanceUID, ProjectUID: e.ProjectUID, ProjectName: e.ProjectName, IssueUID: e.IssueUID, RelatedIssueUID: e.RelatedIssueUID, Type: e.Type, Actor: e.Actor, HLCPhysicalMS: e.HLCPhysicalMS, HLCCounter: e.HLCCounter, ContentHash: e.ContentHash, Payload: jsontext.Value(e.Payload), CreatedAt: e.CreatedAt})
+	require.NoError(t, err)
+	require.NoError(t, spoke.DB.MaterializeFederatedProject(ctx, replica.ID))
+	_, _, _, err = hub.DB.SoftDeleteIssue(ctx, issue.ID, "tester")
+	require.NoError(t, err)
+	events, err = hub.DB.EventsAfter(ctx, db.EventsAfterParams{ProjectID: project.ID, IssueUID: issue.UID, Types: []string{"issue.soft_deleted"}, Limit: 1})
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	e = events[0]
+	_, err = spoke.DB.InsertRemoteEvent(ctx, replica.ID, db.RemoteEvent{EventUID: e.UID, OriginInstanceUID: e.OriginInstanceUID, ProjectUID: e.ProjectUID, ProjectName: e.ProjectName, IssueUID: e.IssueUID, RelatedIssueUID: e.RelatedIssueUID, Type: e.Type, Actor: e.Actor, HLCPhysicalMS: e.HLCPhysicalMS, HLCCounter: e.HLCCounter, ContentHash: e.ContentHash, Payload: jsontext.Value(e.Payload), CreatedAt: e.CreatedAt})
+	require.NoError(t, err)
+	require.NoError(t, spoke.DB.MaterializeFederatedProject(ctx, replica.ID))
+	grant := createClaimEnrollment(t, hub, project.ID, spoke.DB.InstanceUID(), "pull")
+	require.NoError(t, config.WriteFederationCredential(replica.UID, config.FederationCredential{HubURL: hub.URL, HubProjectID: project.ID, Token: grant.Token}))
+	resp, raw := envGetRaw(t, spoke, fmt.Sprintf("/api/v1/projects/%d/search?q=claim&include_deleted=true", replica.ID))
+	require.Equal(t, http.StatusOK, resp.StatusCode, string(raw))
+	var result struct {
+		Results []struct {
+			Issue db.Issue `json:"issue"`
+		} `json:"results"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &result))
+	require.Len(t, result.Results, 1)
+	require.Equal(t, issue.UID, result.Results[0].Issue.UID)
+	require.NotNil(t, result.Results[0].Issue.DeletedAt)
+}

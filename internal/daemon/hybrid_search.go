@@ -28,7 +28,7 @@ type hybridParams struct {
 	ExcludeLabels   []string
 	AllowedIssueIDs []int64
 	IssueScope      *db.APITokenScope
-	RemoteVector    func(context.Context, hybridParams, int, []db.SearchCandidate) ([]db.SearchCandidate, []db.SearchCandidate, error)
+	RemoteVector    func(context.Context, hybridParams, int, []db.SearchCandidate) ([]db.SearchCandidate, []db.SearchCandidate, bool, error)
 }
 
 type hybridResult struct {
@@ -36,6 +36,13 @@ type hybridResult struct {
 	Degraded       bool
 	DegradedReason string
 	Hits           []db.SearchCandidate
+}
+
+func (p hybridParams) strictPageLimit() int64 {
+	if p.Requested != "semantic" && p.Requested != "hybrid" {
+		return 0
+	}
+	return int64(p.Limit)
 }
 
 // queryEmbedTimeout bounds the single query-embed call so a hung embedder can
@@ -133,7 +140,7 @@ func hybridSearch(ctx context.Context, store db.Storage, idx *vector.Index, emb 
 	if mode == modeHybrid || mode == modeSemantic {
 		if p.RemoteVector != nil {
 			var hubLexical []db.SearchCandidate
-			vector, hubLexical, vecErr = p.RemoteVector(ctx, p, fetch, lexical)
+			vector, hubLexical, vecBounded, vecErr = p.RemoteVector(ctx, p, fetch, lexical)
 			if vecErr == nil && mode == modeHybrid {
 				lexical = hubLexical
 			}

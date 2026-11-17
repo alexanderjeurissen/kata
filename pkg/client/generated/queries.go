@@ -255,6 +255,8 @@ type SearchFederationProjectQuery struct {
 	Label          []string                            `json:"label,omitempty"`
 	ExcludeLabel   []string                            `json:"exclude_label,omitempty"`
 	IncludeLexical *bool                               `json:"include_lexical,omitempty"`
+	IncludeDeleted *bool                               `json:"include_deleted,omitempty"`
+	PageLimit      *int64                              `json:"page_limit,omitempty" validate:"omitempty,gte=0,lte=200"`
 }
 
 func (s SearchFederationProjectQuery) Validate() error {
@@ -267,6 +269,11 @@ func (s SearchFederationProjectQuery) Validate() error {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append("Status", err)
 			}
+		}
+	}
+	if s.PageLimit != nil {
+		if err := typesValidator.Var(s.PageLimit, "omitempty,gte=0,lte=200"); err != nil {
+			errors = errors.Append("PageLimit", err)
 		}
 	}
 	if len(errors) == 0 {

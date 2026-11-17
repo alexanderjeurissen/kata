@@ -5729,8 +5729,10 @@ func (c *Client) SearchFederationProject(ctx context.Context, options *SearchFed
 	var err error
 
 	queryEncoding := map[string]runtime.QueryEncoding{
+		"include_deleted": {Style: "form", Explode: &[]bool{false}[0]},
 		"include_lexical": {Style: "form", Explode: &[]bool{false}[0]},
 		"limit":           {Style: "form", Explode: &[]bool{false}[0]},
+		"page_limit":      {Style: "form", Explode: &[]bool{false}[0]},
 		"q":               {Style: "form", Explode: &[]bool{false}[0]},
 		"status":          {Style: "form", Explode: &[]bool{false}[0]},
 	}

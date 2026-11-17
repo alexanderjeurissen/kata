@@ -2960,6 +2960,8 @@ components:
     FederationSearchResponseBody:
       additionalProperties: true
       properties:
+        bounded:
+          type: boolean
         lexical:
           items:
             $ref: "#/components/schemas/FederationSearchHit"
@@ -2971,6 +2973,7 @@ components:
       required:
         - results
         - lexical
+        - bounded
       type: object
     FederationSpokeNameOut:
       additionalProperties: true
@@ -10188,6 +10191,20 @@ paths:
           name: include_lexical
           schema:
             type: boolean
+        - explode: false
+          in: query
+          name: include_deleted
+          schema:
+            type: boolean
+        - explode: false
+          in: query
+          name: page_limit
+          schema:
+            default: 200
+            format: int64
+            maximum: 200
+            minimum: 0
+            type: integer
       responses:
         "200":
           content:

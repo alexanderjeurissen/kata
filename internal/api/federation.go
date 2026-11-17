@@ -18,6 +18,8 @@ type FederationSearchRequest struct {
 	Labels         []string `query:"label,explode"`
 	ExcludeLabels  []string `query:"exclude_label,explode"`
 	IncludeLexical bool     `query:"include_lexical,omitempty"`
+	IncludeDeleted bool     `query:"include_deleted,omitempty"`
+	PageLimit      int      `query:"page_limit" default:"200" minimum:"0" maximum:"200"`
 }
 
 // FederationSearchHit describes a matching issue from the hub.
@@ -34,6 +36,7 @@ type FederationSearchResponse struct {
 	Body struct {
 		Results []FederationSearchHit `json:"results"`
 		Lexical []FederationSearchHit `json:"lexical"`
+		Bounded bool                  `json:"bounded"`
 	}
 }
 

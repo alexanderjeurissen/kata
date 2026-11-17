@@ -140,7 +140,7 @@ func registerFederationHandlers(humaAPI huma.API, cfg ServerConfig) {
 			limit = 20
 		}
 		limit = min(limit, fetchCap)
-		res, err := hybridSearch(ctx, cfg.DB, cfg.VectorIndex, cfg.Embedder, hybridParams{ProjectID: in.ProjectID, Query: in.Query, Limit: limit, Requested: "semantic", Status: in.Status, Labels: in.Labels, ExcludeLabels: in.ExcludeLabels})
+		res, err := hybridSearch(ctx, cfg.DB, cfg.VectorIndex, cfg.Embedder, hybridParams{ProjectID: in.ProjectID, Query: in.Query, Limit: min(in.PageLimit, limit), ProbeLimit: limit, Requested: "semantic", Status: in.Status, Labels: in.Labels, ExcludeLabels: in.ExcludeLabels})
 		if err != nil {
 			if me, ok := errors.AsType[*modeError](err); ok {
 				return nil, api.NewError(me.Status(), "unavailable", me.Error(), "", nil)
@@ -181,9 +181,9 @@ func registerFederationHandlers(humaAPI huma.API, cfg ServerConfig) {
 			}
 			out.Body.Results = append(out.Body.Results, row)
 		}
-		out.Body.Lexical = []api.FederationSearchHit{}
+		out.Body.Lexical, out.Body.Bounded = []api.FederationSearchHit{}, res.Degraded
 		if in.IncludeLexical {
-			matches, err := cfg.DB.SearchFTS(ctx, db.SearchFTSParams{ProjectID: in.ProjectID, Query: in.Query, Limit: limit, Status: in.Status, Labels: in.Labels, ExcludeLabels: in.ExcludeLabels})
+			matches, err := cfg.DB.SearchFTS(ctx, db.SearchFTSParams{ProjectID: in.ProjectID, Query: in.Query, Limit: limit, Status: in.Status, IncludeDeleted: in.IncludeDeleted, Labels: in.Labels, ExcludeLabels: in.ExcludeLabels})
 			if err != nil {
 				return nil, internalAPIError(err)
 			}

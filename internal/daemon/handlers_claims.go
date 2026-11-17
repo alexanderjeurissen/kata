@@ -826,9 +826,9 @@ type claimHubClient struct {
 const hitEnvelopeBytes = 4096
 const responseEnvelopeBytes = 1024
 
-func (c *claimHubClient) SearchShared(ctx context.Context, projectID int64, p hybridParams, limit int) ([]api.FederationSearchHit, []api.FederationSearchHit, error) {
+func (c *claimHubClient) SearchShared(ctx context.Context, projectID int64, p hybridParams, limit int) ([]api.FederationSearchHit, []api.FederationSearchHit, bool, error) {
 	if c.transportErr != nil {
-		return nil, nil, c.transportErr
+		return nil, nil, false, c.transportErr
 	}
 	includeLexical := p.Requested != "semantic"
 	rows := limit
@@ -838,26 +838,23 @@ func (c *claimHubClient) SearchShared(ctx context.Context, projectID int64, p hy
 	maxBytes := int64(rows*(compactRowMaxBytes+hitEnvelopeBytes) + responseEnvelopeBytes)
 	client, err := generated.NewDefaultClient(c.baseURL, runtime.WithHTTPClient(claimHubDoer{client: c.client, successBodyLimit: maxBytes}))
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, false, err
 	}
-	count := int64(limit)
-	query := &generated.SearchFederationProjectQuery{Q: p.Query, Limit: &count, Label: p.Labels, ExcludeLabel: p.ExcludeLabels, IncludeLexical: &includeLexical}
+	count, pageLimit := int64(limit), p.strictPageLimit()
+	query := &generated.SearchFederationProjectQuery{Q: p.Query, Limit: &count, PageLimit: &pageLimit, Label: p.Labels, ExcludeLabel: p.ExcludeLabels, IncludeLexical: &includeLexical, IncludeDeleted: &p.IncludeDeleted}
 	if p.Status != "" {
 		status := generated.SearchFederationProjectQueryStatus(p.Status)
 		query.Status = &status
 	}
 	response, err := client.SearchFederationProjectWithResponse(ctx, &generated.SearchFederationProjectRequestOptions{PathParams: &generated.SearchFederationProjectPath{ProjectID: projectID}, Query: query})
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, false, err
 	}
-	var body struct {
-		Results []api.FederationSearchHit `json:"results"`
-		Lexical []api.FederationSearchHit `json:"lexical"`
+	var body api.FederationSearchResponse
+	if err := json.Unmarshal(response.Body, &body.Body); err != nil {
+		return nil, nil, false, err
 	}
-	if err := json.Unmarshal(response.Body, &body); err != nil {
-		return nil, nil, err
-	}
-	return body.Results, body.Lexical, nil
+	return body.Body.Results, body.Body.Lexical, body.Body.Bounded, nil
 }
 
 type claimHubStatusError struct {

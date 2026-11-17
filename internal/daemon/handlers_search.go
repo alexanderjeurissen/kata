@@ -89,24 +89,24 @@ func registerSearchHandlers(humaAPI huma.API, cfg ServerConfig) {
 				IssueScope: issueScopeFromContext(ctx),
 			}
 			if direct {
-				params.RemoteVector = func(ctx context.Context, p hybridParams, fetch int, lexical []db.SearchCandidate) ([]db.SearchCandidate, []db.SearchCandidate, error) {
+				params.RemoteVector = func(ctx context.Context, p hybridParams, fetch int, lexical []db.SearchCandidate) ([]db.SearchCandidate, []db.SearchCandidate, bool, error) {
 					ctx, cancel := context.WithTimeout(ctx, queryEmbedTimeout)
 					defer cancel()
 					client, cred, err := claimForwardClient(ctx, cfg, binding)
 					if err != nil {
-						return nil, nil, err
+						return nil, nil, false, err
 					}
-					hits, matched, err := client.SearchShared(ctx, cred.HubProjectID, p, fetch)
+					hits, matched, bounded, err := client.SearchShared(ctx, cred.HubProjectID, p, fetch)
 					if err != nil {
-						return nil, nil, err
+						return nil, nil, false, err
 					}
 					candidates, err := hydrateRemoteHits(ctx, cfg.DB, hits, p)
 					if err != nil {
-						return nil, nil, err
+						return nil, nil, false, err
 					}
 					current, err := hydrateRemoteHits(ctx, cfg.DB, matched, p)
 					if err != nil {
-						return nil, nil, err
+						return nil, nil, false, err
 					}
 					byUID := make(map[string]db.SearchCandidate, len(current))
 					for _, hit := range current {
@@ -120,14 +120,14 @@ func registerSearchHandlers(humaAPI huma.API, cfg ServerConfig) {
 					}
 					pending, err := pendingSearchIssues(ctx, cfg.DB, binding, unmatched)
 					if err != nil {
-						return nil, nil, err
+						return nil, nil, false, err
 					}
 					for _, hit := range unmatched {
 						if pending[hit.Issue.UID] {
 							current = append(current, hit)
 						}
 					}
-					return candidates, current, nil
+					return candidates, current, bounded, nil
 				}
 			}
 			res, err = hybridSearch(ctx, cfg.DB, cfg.VectorIndex, cfg.Embedder, params)
