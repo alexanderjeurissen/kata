@@ -361,6 +361,31 @@ func TestReconcileRecipeChangeCutsOverEligibleProjectsWithDeferredSharedContent(
 	require.Contains(t, encoded[1][0], "shared search target")
 }
 
+func TestReconcileDirectSpokeEmbedsOnlyPrivateProjects(t *testing.T) {
+	ctx := t.Context()
+	store := newReconcilerTestStore(t)
+	privateProject, err := store.CreateProject(ctx, "private-project")
+	require.NoError(t, err)
+	sharedProject, err := store.CreateProject(ctx, "shared-project")
+	require.NoError(t, err)
+	_, _, err = store.CreateIssue(ctx, db.CreateIssueParams{ProjectID: privateProject.ID, Title: "private search target", Author: "member"})
+	require.NoError(t, err)
+	_, _, err = store.CreateIssue(ctx, db.CreateIssueParams{ProjectID: sharedProject.ID, Title: "shared search target", Author: "member"})
+	require.NoError(t, err)
+	_, err = store.UpsertFederationBinding(ctx, db.FederationBinding{
+		ProjectID: sharedProject.ID, Role: db.FederationRoleSpoke, HubURL: "https://hub.example",
+		HubProjectID: sharedProject.ID, HubProjectUID: sharedProject.UID, Enabled: true,
+	})
+	require.NoError(t, err)
+	embedder := newReconcilerArtifactEmbedder(t, "example-model")
+	r := NewReconciler(store, openTestVectorIndex(t), embedder, ReconcilerConfig{BatchSize: 64})
+	require.NoError(t, r.reconcileOnce(ctx))
+	encoded := embedder.inputs()
+	require.Len(t, encoded, 1)
+	require.Len(t, encoded[0], 1)
+	require.Contains(t, encoded[0][0], "private search target")
+}
+
 type reconcilerArtifactEmbedder struct {
 	client *embedding.Client
 	mu     sync.Mutex

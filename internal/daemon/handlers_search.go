@@ -40,7 +40,12 @@ func registerSearchHandlers(humaAPI huma.API, cfg ServerConfig) {
 			limit = 20
 		}
 		mode := in.Mode
-		if insecureReadonlyRequest(ctx) && cfg.Embedder != nil {
+		binding, bindingErr := cfg.DB.FederationBindingByProject(ctx, in.ProjectID)
+		if bindingErr != nil && !errors.Is(bindingErr, db.ErrNotFound) {
+			return nil, internalAPIError(bindingErr)
+		}
+		direct := bindingErr == nil && binding.Enabled && binding.Role == db.FederationRoleSpoke && binding.RelayConfig == nil
+		if insecureReadonlyRequest(ctx) && (cfg.Embedder != nil || direct) {
 			switch mode {
 			case "hybrid", "semantic":
 				return nil, api.NewError(401, "auth_required",
@@ -77,12 +82,27 @@ func registerSearchHandlers(humaAPI huma.API, cfg ServerConfig) {
 			res.Hits, err = cfg.DB.SearchFTS(ctx, params)
 			res.Mode = modeLexical
 		} else {
-			res, err = hybridSearch(ctx, cfg.DB, cfg.VectorIndex, cfg.Embedder, hybridParams{
+			params := hybridParams{
 				ProjectID: in.ProjectID, Query: in.Query, Limit: limit, ProbeLimit: probeLimit,
 				IncludeDeleted: in.IncludeDeleted, Requested: mode,
 				Labels: in.Labels, ExcludeLabels: in.ExcludeLabels, Status: in.Status,
 				IssueScope: issueScopeFromContext(ctx),
-			})
+			}
+			if direct {
+				params.RemoteVector = func(ctx context.Context, p hybridParams, fetch int) ([]db.SearchCandidate, bool, error) {
+					client, cred, err := claimForwardClient(ctx, cfg, binding)
+					if err != nil {
+						return nil, false, err
+					}
+					hits, err := client.SearchShared(ctx, cred.HubProjectID, p, fetch)
+					if err != nil {
+						return nil, false, err
+					}
+					candidates, err := hydrateVectorHits(ctx, cfg.DB, hits, p, fetch, newLabelFilter(p.Labels, p.ExcludeLabels))
+					return candidates, false, err
+				}
+			}
+			res, err = hybridSearch(ctx, cfg.DB, cfg.VectorIndex, cfg.Embedder, params)
 		}
 
 		if err != nil {
@@ -109,7 +129,7 @@ func registerSearchHandlers(humaAPI huma.API, cfg ServerConfig) {
 				page.NextCursor = pagination.Encode(pagination.Position{CreatedAt: last.CreatedAt, ID: last.ID}, hash)
 			}
 		}
-		out := &api.SearchResponse{EmbeddingsConfigured: strconv.FormatBool(cfg.Embedder != nil)}
+		out := &api.SearchResponse{EmbeddingsConfigured: strconv.FormatBool(cfg.Embedder != nil || direct)}
 		out.Body.PageMetadata = page
 		out.Body.Query = in.Query
 		out.Body.Mode = string(res.Mode)

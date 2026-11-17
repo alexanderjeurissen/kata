@@ -271,6 +271,31 @@ func TestHybridSearchScopedSemanticFailsClosedAndAutoUsesLexical(t *testing.T) {
 	require.Equal(t, issue.ID, result.Hits[0].Issue.ID)
 }
 
+func TestHybridSearchScopedRemoteUsesLexical(t *testing.T) {
+	ctx := t.Context()
+	store := newReconcilerTestStore(t)
+	project, err := store.CreateProject(ctx, "example-project")
+	require.NoError(t, err)
+	issue, _, err := store.CreateIssue(ctx, db.CreateIssueParams{ProjectID: project.ID, Title: "delegated login race", Author: "member"})
+	require.NoError(t, err)
+	remote := func(context.Context, hybridParams, int) ([]db.SearchCandidate, bool, error) {
+		t.Fatal("issue-scoped search must not call the hub")
+		return nil, false, nil
+	}
+	params := hybridParams{ProjectID: project.ID, Query: "login", Limit: 10, Requested: "semantic", AllowedIssueIDs: []int64{issue.ID}, RemoteVector: remote}
+	_, err = hybridSearch(ctx, store, nil, nil, params)
+	var modeErr *modeError
+	require.ErrorAs(t, err, &modeErr)
+	require.Equal(t, 503, modeErr.Status())
+	params.Requested = "auto"
+	result, err := hybridSearch(ctx, store, nil, nil, params)
+	require.NoError(t, err)
+	require.Equal(t, modeLexical, result.Mode)
+	require.True(t, result.Degraded)
+	require.Len(t, result.Hits, 1)
+	require.Equal(t, issue.ID, result.Hits[0].Issue.ID)
+}
+
 // TestVectorLegExcludesOtherProjectsAndDeleted covers the seam runVectorLeg
 // added on top of kit's generation index: the index is daemon-global (one
 // sidecar, all projects' content mirrored into it), so a raw KNN hit can

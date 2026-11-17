@@ -260,13 +260,17 @@ That is the consent boundary. For sensitive projects, prefer a local endpoint
 (such as Ollama on loopback) so issue text never leaves the host. The embedding
 API key is only ever sent to the configured `base_url` origin.
 
-Embeddings are local derived state and **do not federate**: each daemon embeds
-only what it stores, and no vectors are sent to or pulled from federated hubs.
-SQLite keeps them in a sidecar database; PostgreSQL keeps them in pgvector
+Direct spokes search shared projects on the hub and embed only local projects.
+Configure semantic search on the hub to search shared projects by meaning. If
+the hub is unreachable, automatic search falls back to local word matches;
+explicit semantic or hybrid search reports the failure. Relay spokes retain
+their existing embedding behavior.
+
+SQLite keeps vectors in a sidecar database; PostgreSQL keeps them in pgvector
 tables in its selected Kata schema when that optional extension is installed.
 They are not included in JSONL
 [backup/export](../operations/backup-restore.md); a restore or a storage-format
-upgrade re-embeds from scratch rather than carrying vectors forward. Archives
+upgrade rebuilds local vectors instead of carrying them forward. Archives
 exported by older kata versions that still contain
 embedding records import cleanly: those records are skipped and the
 reconciler rebuilds the vectors.

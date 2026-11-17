@@ -27,6 +27,7 @@ import (
 	"go.kenn.io/kata/internal/federationsigning"
 	"go.kenn.io/kata/internal/federationsigning/signingpolicy"
 	"go.kenn.io/kata/internal/projectscope"
+	kitvec "go.kenn.io/kit/vector"
 )
 
 // projectScopedClaimActionEvent rewrites the lease action response's event
@@ -821,6 +822,44 @@ type claimHubClient struct {
 	baseURL      string
 	client       *http.Client
 	transportErr error
+}
+
+func (c *claimHubClient) SearchShared(ctx context.Context, projectID int64, p hybridParams, limit int) ([]kitvec.Hit[string], error) {
+	if c.transportErr != nil {
+		return nil, c.transportErr
+	}
+	values := url.Values{"q": {p.Query}, "limit": {fmt.Sprint(limit)}, "label": p.Labels, "exclude_label": p.ExcludeLabels}
+	if p.Status != "" {
+		values.Set("status", p.Status)
+	}
+	path := fmt.Sprintf("/api/v1/projects/%d/federation/search", projectID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path+"?"+values.Encode(), nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.client.Do(req) //nolint:gosec // The client pins credentials to the configured hub origin.
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, &claimHubStatusError{Path: path, StatusCode: resp.StatusCode, Body: string(data)}
+	}
+	var body struct {
+		Results []api.FederationSearchHit `json:"results"`
+	}
+	if err := json.Unmarshal(data, &body); err != nil {
+		return nil, err
+	}
+	hits := make([]kitvec.Hit[string], 0, len(body.Results))
+	for _, hit := range body.Results {
+		hits = append(hits, kitvec.Hit[string]{Doc: hit.IssueUID, Score: float32(hit.Score)})
+	}
+	return hits, nil
 }
 
 type claimHubStatusError struct {

@@ -2998,6 +2998,37 @@ func (f FederationRootKeyRepinResult) Validate() error {
 	return errors
 }
 
+type FederationSearchHit struct {
+	IssueUID string  `json:"issue_uid" validate:"required"`
+	Score    float64 `json:"score"`
+}
+
+func (f FederationSearchHit) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(f))
+}
+
+type FederationSearchResponseBody struct {
+	Results []FederationSearchHit `json:"results" validate:"required"`
+}
+
+func (f FederationSearchResponseBody) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(f.Results, "required"); err != nil {
+		errors = errors.Append("Results", err)
+	}
+	for i, item := range f.Results {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Results[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type FederationSpokeNameOut struct {
 	SpokeInstanceUID string  `json:"spoke_instance_uid" validate:"required"`
 	SpokeName        *string `json:"spoke_name,omitempty"`

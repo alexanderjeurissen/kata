@@ -25,6 +25,7 @@ type hybridParams struct {
 	ExcludeLabels   []string
 	AllowedIssueIDs []int64
 	IssueScope      *db.APITokenScope
+	RemoteVector    func(context.Context, hybridParams, int) ([]db.SearchCandidate, bool, error)
 }
 
 type hybridResult struct {
@@ -76,7 +77,7 @@ const knnDeepLimit = 1000
 func hybridSearch(ctx context.Context, store db.Storage, idx *vector.Index, emb *embedding.Client, p hybridParams) (hybridResult, error) {
 	// Credential failures must be explained even before an index is ready.
 	// Otherwise retain the existing absent-index lexical-only contract.
-	configured := emb != nil && (idx != nil || emb.CredentialHealth().Credential != "ok")
+	configured := p.RemoteVector != nil || emb != nil && (idx != nil || emb.CredentialHealth().Credential != "ok")
 	mode, err := resolveMode(p.Requested, configured)
 	if err != nil {
 		return hybridResult{}, &modeError{status: 400, msg: err.Error()}
@@ -120,7 +121,11 @@ func hybridSearch(ctx context.Context, store db.Storage, idx *vector.Index, emb 
 	var vecBounded bool
 	var vecErr error
 	if mode == modeHybrid || mode == modeSemantic {
-		vector, vecBounded, vecErr = runVectorLeg(ctx, store, idx, emb, p, fetch)
+		if p.RemoteVector != nil {
+			vector, vecBounded, vecErr = p.RemoteVector(ctx, p, fetch)
+		} else {
+			vector, vecBounded, vecErr = runVectorLeg(ctx, store, idx, emb, p, fetch)
+		}
 	}
 
 	if e := <-lexErrCh; e != nil {

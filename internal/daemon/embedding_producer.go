@@ -37,10 +37,9 @@ func (r *Reconciler) projectGenerationAllowed(ctx context.Context, projectUID st
 		return false, nil
 	}
 	if binding.Role == db.FederationRoleSpoke {
-		// Negotiated replicas require a live authenticated producer check.
-		// Legacy direct federation retains its existing local worker behavior.
+		// Direct spokes use the hub's search index for shared projects.
 		if binding.RelayConfig == nil {
-			return true, nil
+			return false, nil
 		}
 		if r.cfg.FederationProducerAllowed == nil {
 			return false, nil

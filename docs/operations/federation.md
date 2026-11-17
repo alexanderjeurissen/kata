@@ -35,6 +35,10 @@ fresh online reads. Federation instead favors local availability and durable
 offline queues. Each participant may use SQLite or PostgreSQL independently;
 no backend-specific federation flags are needed.
 
+Direct spokes use their hub for semantic search over shared projects. Configure
+[semantic search](../guide/semantic-search.md) on the hub to enable it. Word
+search continues locally when the hub is offline.
+
 Workspace aliases and per-issue recurrence schedules stay local. Issues created
 by a recurrence synchronize as ordinary content. [Cron](../reference/cron.md)
 job and workflow definitions and run evidence do synchronize; only the owning
