@@ -823,6 +823,9 @@ type claimHubClient struct {
 	transportErr error
 }
 
+// Full issue snapshots can be larger than the other claim responses.
+const maxHubSearchResponseBytes = 8 << 20
+
 func (c *claimHubClient) SearchShared(ctx context.Context, projectID int64, p hybridParams, limit int) ([]api.FederationSearchHit, error) {
 	if c.transportErr != nil {
 		return nil, c.transportErr
@@ -841,9 +844,12 @@ func (c *claimHubClient) SearchShared(ctx context.Context, projectID int64, p hy
 		return nil, err
 	}
 	defer resp.Body.Close()
-	data, err := io.ReadAll(resp.Body)
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxHubSearchResponseBytes+1))
 	if err != nil {
 		return nil, err
+	}
+	if len(data) > maxHubSearchResponseBytes {
+		return nil, fmt.Errorf("hub search response exceeds %d bytes", maxHubSearchResponseBytes)
 	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, &claimHubStatusError{Path: path, StatusCode: resp.StatusCode, Body: string(data)}

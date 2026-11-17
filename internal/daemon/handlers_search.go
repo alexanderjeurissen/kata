@@ -44,7 +44,7 @@ func registerSearchHandlers(humaAPI huma.API, cfg ServerConfig) {
 		if bindingErr != nil && !errors.Is(bindingErr, db.ErrNotFound) {
 			return nil, internalAPIError(bindingErr)
 		}
-		direct := bindingErr == nil && binding.Enabled && binding.Role == db.FederationRoleSpoke && binding.RelayConfig == nil
+		direct := bindingErr == nil && binding.Enabled && isDirectSpoke(binding)
 		if insecureReadonlyRequest(ctx) && (cfg.Embedder != nil || direct) {
 			switch mode {
 			case "hybrid", "semantic":
