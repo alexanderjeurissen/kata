@@ -156,11 +156,17 @@ func (h toolHandlers) search(ctx context.Context, _ *sdkmcp.CallToolRequest, inp
 		}
 		for rank, hit := range response.Results {
 			summary := h.summaryFromIssue(projects[index], hit.Issue)
+			remote := hit.Remote != nil && *hit.Remote
+			if remote {
+				summary.Ref = hit.Issue.UID
+				summary.QualifiedRef = projects[index].Name + "#" + hit.Issue.UID
+			}
 			summary.WebURL = hit.WebURL
 			ranked = append(ranked, rankedHit{rank: rank, hit: SearchHit{
 				Issue:     summary,
 				Score:     hit.Score,
 				MatchedIn: nonNilStrings(hit.MatchedIn),
+				Remote:    remote,
 			}})
 		}
 		if response.Degraded != nil && *response.Degraded {

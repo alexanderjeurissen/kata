@@ -266,6 +266,11 @@ the hub is unreachable, automatic search falls back to local word matches;
 explicit semantic or hybrid search reports the failure. Relay spokes retain
 their existing embedding behavior.
 
+Shared-project semantic results show the hub's issue content. Results the spoke
+has not pulled yet are marked `remote` and use the issue UID as their reference.
+When the hub has a browser URL, the result links to it. Spoke actions can
+address the issue after it has synchronized.
+
 Upgrade the hub to a version with the federation search route before upgrading
 direct spokes. With an older hub, automatic search returns local word matches
 with a degradation reason; explicit semantic and hybrid searches return 503.

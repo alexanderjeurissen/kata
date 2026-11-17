@@ -27,7 +27,6 @@ import (
 	"go.kenn.io/kata/internal/federationsigning"
 	"go.kenn.io/kata/internal/federationsigning/signingpolicy"
 	"go.kenn.io/kata/internal/projectscope"
-	kitvec "go.kenn.io/kit/vector"
 )
 
 // projectScopedClaimActionEvent rewrites the lease action response's event
@@ -824,7 +823,7 @@ type claimHubClient struct {
 	transportErr error
 }
 
-func (c *claimHubClient) SearchShared(ctx context.Context, projectID int64, p hybridParams, limit int) ([]kitvec.Hit[string], error) {
+func (c *claimHubClient) SearchShared(ctx context.Context, projectID int64, p hybridParams, limit int) ([]api.FederationSearchHit, error) {
 	if c.transportErr != nil {
 		return nil, c.transportErr
 	}
@@ -842,7 +841,7 @@ func (c *claimHubClient) SearchShared(ctx context.Context, projectID int64, p hy
 		return nil, err
 	}
 	defer resp.Body.Close()
-	data, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+	data, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
 	}
@@ -855,11 +854,7 @@ func (c *claimHubClient) SearchShared(ctx context.Context, projectID int64, p hy
 	if err := json.Unmarshal(data, &body); err != nil {
 		return nil, err
 	}
-	hits := make([]kitvec.Hit[string], 0, len(body.Results))
-	for _, hit := range body.Results {
-		hits = append(hits, kitvec.Hit[string]{Doc: hit.IssueUID, Score: float32(hit.Score)})
-	}
-	return hits, nil
+	return body.Results, nil
 }
 
 type claimHubStatusError struct {

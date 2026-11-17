@@ -6,10 +6,13 @@ import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
@@ -19,6 +22,7 @@ import (
 	"go.kenn.io/kata/internal/embedding"
 	mcpserver "go.kenn.io/kata/internal/mcp"
 	"go.kenn.io/kata/internal/testenv"
+	"go.kenn.io/kata/internal/testfix"
 	"go.kenn.io/kata/internal/vector"
 	kataclient "go.kenn.io/kata/pkg/client"
 )
@@ -42,7 +46,9 @@ func TestDirectSpokeSearchUsesHubResults(t *testing.T) {
 	idx, err := vector.Open(ctx, filepath.Join(t.TempDir(), "vectors.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, idx.Close()) })
-	hub := testenv.New(t, func(cfg *daemon.ServerConfig) { cfg.Embedder, cfg.VectorIndex = emb, idx })
+	manager, err := daemon.NewWebSessionManager(daemon.WebSessionManagerConfig{Origin: "https://tasks.example", InstanceID: "hub"})
+	require.NoError(t, err)
+	hub := testenv.New(t, func(cfg *daemon.ServerConfig) { cfg.Embedder, cfg.VectorIndex, cfg.WebSessions = emb, idx, manager })
 	project, issue := createClaimHubIssue(t, hub)
 	_, err = idx.RefreshMirror(ctx, hub.DB)
 	require.NoError(t, err)
@@ -83,7 +89,9 @@ func TestDirectSpokeSearchUsesHubResults(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode, string(raw))
 	var body struct {
 		Results []struct {
-			Issue db.Issue `json:"issue"`
+			Issue  db.Issue `json:"issue"`
+			Remote bool     `json:"remote"`
+			WebURL string   `json:"web_url"`
 		} `json:"results"`
 	}
 	require.NoError(t, json.Unmarshal(raw, &body))
@@ -127,7 +135,77 @@ func TestDirectSpokeSearchUsesHubResults(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(output), "claim target")
 	require.Contains(t, string(output), "claim local only")
-
+	first, _, err := hub.DB.CreateIssue(ctx, db.CreateIssueParams{ProjectID: project.ID, Title: "recent hub one", Author: "tester"})
+	require.NoError(t, err)
+	second, _, err := hub.DB.CreateIssue(ctx, db.CreateIssueParams{ProjectID: project.ID, Title: "recent hub two", Author: "tester"})
+	require.NoError(t, err)
+	title := "hub updated title"
+	_, _, _, err = hub.DB.EditIssue(ctx, db.EditIssueParams{IssueID: issue.ID, Title: &title, Actor: "tester"})
+	require.NoError(t, err)
+	_, err = hub.DB.AddLabel(ctx, issue.ID, "hub-label", "tester")
+	require.NoError(t, err)
+	_, err = idx.RefreshMirror(ctx, hub.DB)
+	require.NoError(t, err)
+	_, err = idx.Fill(ctx, key, func(_ context.Context, inputs []string) ([][]float32, error) {
+		vectors := make([][]float32, len(inputs))
+		for i := range vectors {
+			vectors[i] = []float32{1, 0}
+		}
+		return vectors, nil
+	}, 64, nil, nil)
+	require.NoError(t, err)
+	resp, raw = envGetRaw(t, spoke, fmt.Sprintf("/api/v1/projects/%d/search?q=concept&mode=semantic", replica.ID))
+	require.Equal(t, http.StatusOK, resp.StatusCode, string(raw))
+	require.NoError(t, json.Unmarshal(raw, &body))
+	require.Len(t, body.Results, 3)
+	byUID := make(map[string]int)
+	for i, hit := range body.Results {
+		byUID[hit.Issue.UID] = i
+	}
+	require.Len(t, byUID, 3)
+	for _, remote := range []db.Issue{first, second} {
+		i, ok := byUID[remote.UID]
+		require.True(t, ok)
+		hit := body.Results[i]
+		require.True(t, hit.Remote)
+		require.Zero(t, hit.Issue.ID)
+		require.Equal(t, replica.ID, hit.Issue.ProjectID)
+		require.Equal(t, remote.UID, hit.Issue.ShortID)
+		require.Equal(t, remote.Title, hit.Issue.Title)
+		require.Equal(t, "https://tasks.example/kata?issue="+remote.UID+"#direct=1", hit.WebURL)
+	}
+	known := body.Results[byUID[issue.UID]]
+	require.False(t, known.Remote)
+	require.Equal(t, local.ID, known.Issue.ID)
+	require.Equal(t, local.ShortID, known.Issue.ShortID)
+	require.Equal(t, "hub updated title", known.Issue.Title)
+	resp, raw = envGetRaw(t, spoke, fmt.Sprintf("/api/v1/projects/%d/search?q=concept&mode=semantic&label=hub-label", replica.ID))
+	require.Equal(t, http.StatusOK, resp.StatusCode, string(raw))
+	require.NoError(t, json.Unmarshal(raw, &body))
+	require.Len(t, body.Results, 1)
+	require.Equal(t, issue.UID, body.Results[0].Issue.UID)
+	require.Equal(t, local.ID, body.Results[0].Issue.ID)
+	resp, raw = envGetRaw(t, spoke, fmt.Sprintf("/api/v1/projects/%d/search?q=claim", replica.ID))
+	require.Equal(t, http.StatusOK, resp.StatusCode, string(raw))
+	require.NoError(t, json.Unmarshal(raw, &body))
+	found := false
+	for _, hit := range body.Results {
+		if hit.Issue.UID == issue.UID {
+			require.Equal(t, title, hit.Issue.Title)
+			found = true
+		}
+	}
+	require.True(t, found)
+	result, err = session.CallTool(ctx, &sdkmcp.CallToolParams{Name: "kata.search", Arguments: map[string]any{"query": "concept"}})
+	require.NoError(t, err)
+	require.False(t, result.IsError)
+	output, err = json.Marshal(result.StructuredContent)
+	require.NoError(t, err)
+	for _, remote := range []db.Issue{first, second} {
+		require.Contains(t, string(output), `"ref":"`+remote.UID+`"`)
+		require.Contains(t, string(output), "https://tasks.example/kata?issue="+remote.UID)
+	}
+	require.Contains(t, string(output), `"remote":true`)
 }
 
 func TestDirectSpokeSearchReportsUnavailableHub(t *testing.T) {
@@ -194,6 +272,76 @@ func TestDirectSpokeSearchOlderHub(t *testing.T) {
 	require.Contains(t, string(body), `"mode":"lexical"`)
 	require.Contains(t, string(body), `"degraded":true`)
 	require.Contains(t, string(body), "claim target")
+}
+
+func TestDirectSpokeSearchSlowHub(t *testing.T) {
+	hub, spoke, project, replica, _, token := createClaimForwardingPair(t, "pull")
+	require.NoError(t, config.WriteFederationCredential(replica.UID, config.FederationCredential{HubURL: hub.URL, HubProjectID: project.ID, Token: token}))
+	slow := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) { <-r.Context().Done() }))
+	t.Cleanup(slow.Close)
+	setClaimBindingHubURL(t, spoke, replica.ID, slow.URL)
+	type response struct {
+		mode   string
+		status int
+		body   string
+		err    error
+	}
+	results := make(chan response, 2)
+	for _, mode := range []string{"auto", "semantic"} {
+		go func() {
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			path := fmt.Sprintf("%s/api/v1/projects/%d/search?q=claim&mode=%s", spoke.URL, replica.ID, mode)
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, path, nil)
+			if err != nil {
+				results <- response{mode: mode, err: err}
+				return
+			}
+			resp, err := spoke.HTTP.Do(req)
+			if err != nil {
+				results <- response{mode: mode, err: err}
+				return
+			}
+			defer resp.Body.Close()
+			body, err := io.ReadAll(resp.Body)
+			results <- response{mode: mode, status: resp.StatusCode, body: string(body), err: err}
+		}()
+	}
+	for range 2 {
+		got := <-results
+		require.NoError(t, got.err, got.mode)
+		if got.mode == "auto" {
+			require.Equal(t, http.StatusOK, got.status, got.body)
+			require.Contains(t, got.body, `"degraded":true`)
+			require.Contains(t, got.body, "claim target")
+		} else {
+			require.Equal(t, http.StatusServiceUnavailable, got.status, got.body)
+		}
+	}
+}
+
+func TestDirectSpokeSearchProjectAccessPrecedesHub(t *testing.T) {
+	t.Setenv("KATA_HOME", t.TempDir())
+	store, err := testfix.OpenSQLite(t.Context(), filepath.Join(t.TempDir(), "kata.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, store.Close()) })
+	f := newProjectAccessFixture(t, store)
+	var calls atomic.Int32
+	hub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		http.Error(w, "unavailable", http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(hub.Close)
+	_, err = store.UpsertFederationBinding(t.Context(), db.FederationBinding{ProjectID: f.private.ID, Role: db.FederationRoleSpoke, HubURL: hub.URL, HubProjectID: 1, HubProjectUID: f.private.UID, Actor: "member", Enabled: true})
+	require.NoError(t, err)
+	require.NoError(t, config.WriteFederationCredential(f.private.UID, config.FederationCredential{HubURL: hub.URL, HubProjectID: 1, Token: "pull-test-token"}))
+	path := fmt.Sprintf("/api/v1/projects/%d/search?q=claim&mode=semantic", f.private.ID)
+	status, _, body := f.request(t, http.MethodGet, path, "nonmember", nil, nil)
+	require.Equal(t, http.StatusNotFound, status, string(body))
+	require.Zero(t, calls.Load())
+	status, _, body = f.request(t, http.MethodGet, path, "member", nil, nil)
+	require.Equal(t, http.StatusServiceUnavailable, status, string(body))
+	require.EqualValues(t, 1, calls.Load())
 }
 
 func TestDirectSpokeSearchReadonlyRequiresAuthentication(t *testing.T) {

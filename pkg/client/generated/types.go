@@ -2999,12 +2999,22 @@ func (f FederationRootKeyRepinResult) Validate() error {
 }
 
 type FederationSearchHit struct {
-	IssueUID string  `json:"issue_uid" validate:"required"`
-	Score    float64 `json:"score"`
+	Issue  Issue   `json:"issue"`
+	Score  float64 `json:"score"`
+	WebURL *string `json:"web_url,omitempty"`
 }
 
 func (f FederationSearchHit) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(f))
+	var errors runtime.ValidationErrors
+	if v, ok := any(f.Issue).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Issue", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type FederationSearchResponseBody struct {
@@ -6737,7 +6747,10 @@ func (r RunIssueSyncOnceResponseBody) Validate() error {
 type SearchHit struct {
 	Issue     Issue    `json:"issue"`
 	MatchedIn []string `json:"matched_in" validate:"required"`
-	Score     float64  `json:"score"`
+
+	// Remote The issue has no local row in the searched project.
+	Remote *bool   `json:"remote,omitempty"`
+	Score  float64 `json:"score"`
 
 	// WebURL Browser URL for this issue in the owning daemon.
 	WebURL *string `json:"web_url,omitempty"`

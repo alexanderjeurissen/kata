@@ -2868,13 +2868,15 @@ components:
       type: object
     FederationSearchHit:
       properties:
-        issue_uid:
-          type: string
+        issue:
+          $ref: "#/components/schemas/Issue"
         score:
           format: double
           type: number
+        web_url:
+          type: string
       required:
-        - issue_uid
+        - issue
         - score
       type: object
     FederationSearchResponseBody:
@@ -6481,6 +6483,9 @@ components:
           items:
             type: string
           type: array
+        remote:
+          description: The issue has no local row in the searched project.
+          type: boolean
         score:
           format: double
           type: number

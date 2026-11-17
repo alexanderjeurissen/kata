@@ -6,6 +6,8 @@ import type { Issue } from './issue.ts'
 export interface SearchHit {
   issue: Issue
   matched_in: string[]
+  /** The issue has no local row in the searched project. */
+  remote?: boolean
   score: number
   /** Browser URL for this issue in the owning daemon. */
   web_url?: string

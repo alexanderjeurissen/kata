@@ -896,6 +896,7 @@ type SearchHit struct {
 	Issue     IssueSummary `json:"issue"`
 	Score     float64      `json:"score"`
 	MatchedIn []string     `json:"matched_in"`
+	Remote    bool         `json:"remote,omitempty"`
 }
 
 // SearchOutput reports the effective mode and any semantic fallback.

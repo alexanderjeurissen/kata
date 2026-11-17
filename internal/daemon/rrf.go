@@ -3,6 +3,7 @@ package daemon
 import (
 	"fmt"
 	"sort"
+	"strconv"
 
 	"go.kenn.io/kata/internal/db"
 	"go.kenn.io/kit/search/rrf"
@@ -42,23 +43,30 @@ func resolveMode(requested string, configured bool) (searchMode, error) {
 }
 
 // mergeRRF fuses two ranked legs with reciprocal rank fusion (k=60, equal
-// weights), deduping by issue id and unioning matched_in. Ties break by RRF
+// weights), deduping by local ID or remote UID and unioning matched_in. Ties break by RRF
 // score desc, then updated_at desc, then issue id asc. The resulting Score is
 // the RRF score.
 func mergeRRF(lexical, vector []db.SearchCandidate, limit int) ([]db.SearchCandidate, error) {
 	type agg struct {
-		issue   db.Issue
-		matched map[string]bool
+		candidate db.SearchCandidate
+		matched   map[string]bool
 	}
-	byID := map[int64]agg{}
-	add := func(leg []db.SearchCandidate) []int64 {
-		keys := make([]int64, len(leg))
+	byID := map[string]agg{}
+	add := func(leg []db.SearchCandidate) []string {
+		keys := make([]string, len(leg))
 		for position, c := range leg {
-			keys[position] = c.Issue.ID
-			a, exists := byID[c.Issue.ID]
+			k := "local:" + strconv.FormatInt(c.Issue.ID, 10)
+			if c.Remote {
+				k = "remote:" + c.Issue.UID
+			}
+			keys[position] = k
+			a, exists := byID[k]
 			if !exists {
-				a = agg{issue: c.Issue, matched: map[string]bool{}}
-				byID[c.Issue.ID] = a
+				a = agg{candidate: c, matched: map[string]bool{}}
+				byID[k] = a
+			} else if c.Hub {
+				a.candidate = c
+				byID[k] = a
 			}
 			for _, m := range c.MatchedIn {
 				a.matched[m] = true
@@ -66,7 +74,7 @@ func mergeRRF(lexical, vector []db.SearchCandidate, limit int) ([]db.SearchCandi
 		}
 		return keys
 	}
-	hits, err := rrf.Fuse(rrfK, []rrf.Leg[int64]{
+	hits, err := rrf.Fuse(rrfK, []rrf.Leg[string]{
 		{Name: "lexical", Weight: 1, Keys: add(lexical)},
 		{Name: "semantic", Weight: 1, Keys: add(vector)},
 	})
@@ -82,7 +90,9 @@ func mergeRRF(lexical, vector []db.SearchCandidate, limit int) ([]db.SearchCandi
 			matched = append(matched, m)
 		}
 		sort.Strings(matched)
-		out = append(out, db.SearchCandidate{Issue: a.issue, Score: hit.Score, MatchedIn: matched})
+		candidate := a.candidate
+		candidate.Score, candidate.MatchedIn = hit.Score, matched
+		out = append(out, candidate)
 	}
 	// Deterministic order: RRF score desc, then most-recently-updated first,
 	// then issue id asc as the final tiebreak (matches the design note).

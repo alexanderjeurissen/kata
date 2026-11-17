@@ -1471,6 +1471,7 @@ type SearchRequest struct {
 // column names for the lexical leg plus "semantic" when the vector leg matched.
 type SearchHit struct {
 	WebURL    string   `json:"web_url,omitempty" doc:"Browser URL for this issue in the owning daemon."`
+	Remote    bool     `json:"remote,omitzero" doc:"The issue has no local row in the searched project."`
 	Issue     db.Issue `json:"issue"`
 	Score     float64  `json:"score"`
 	MatchedIn []string `json:"matched_in"`

@@ -19,8 +19,9 @@ type FederationSearchRequest struct {
 }
 
 type FederationSearchHit struct {
-	IssueUID string  `json:"issue_uid"`
-	Score    float64 `json:"score"`
+	Issue  db.Issue `json:"issue"`
+	WebURL string   `json:"web_url,omitempty"`
+	Score  float64  `json:"score"`
 }
 
 type FederationSearchResponse struct {

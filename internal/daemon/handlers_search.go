@@ -90,6 +90,8 @@ func registerSearchHandlers(humaAPI huma.API, cfg ServerConfig) {
 			}
 			if direct {
 				params.RemoteVector = func(ctx context.Context, p hybridParams, fetch int) ([]db.SearchCandidate, bool, error) {
+					ctx, cancel := context.WithTimeout(ctx, queryEmbedTimeout)
+					defer cancel()
 					client, cred, err := claimForwardClient(ctx, cfg, binding)
 					if err != nil {
 						return nil, false, err
@@ -98,7 +100,7 @@ func registerSearchHandlers(humaAPI huma.API, cfg ServerConfig) {
 					if err != nil {
 						return nil, false, err
 					}
-					candidates, err := hydrateVectorHits(ctx, cfg.DB, hits, p, fetch, newLabelFilter(p.Labels, p.ExcludeLabels))
+					candidates, err := hydrateRemoteHits(ctx, cfg.DB, hits, p, fetch)
 					return candidates, false, err
 				}
 			}
@@ -137,9 +139,14 @@ func registerSearchHandlers(humaAPI huma.API, cfg ServerConfig) {
 		out.Body.DegradedReason = res.DegradedReason
 		out.Body.Results = make([]api.SearchHit, 0, len(res.Hits))
 		for _, c := range res.Hits {
+			webURL := issueWebURL(cfg, c.Issue.UID)
+			if c.Remote {
+				webURL = c.WebURL
+			}
 			out.Body.Results = append(out.Body.Results, api.SearchHit{
 				Issue:     c.Issue,
-				WebURL:    issueWebURL(cfg, c.Issue.UID),
+				WebURL:    webURL,
+				Remote:    c.Remote,
 				Score:     c.Score,
 				MatchedIn: c.MatchedIn,
 			})
