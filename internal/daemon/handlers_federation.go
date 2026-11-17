@@ -192,24 +192,18 @@ func registerFederationHandlers(humaAPI huma.API, cfg ServerConfig) {
 				ids = append(ids, issue.ID)
 			}
 		}
-		labels := newLabelFilter(in.Labels, in.ExcludeLabels)
-		var byIssue map[int64][]string
-		if !labels.empty() && len(ids) > 0 {
-			byIssue, err = cfg.DB.LabelsByIssues(ctx, in.ProjectID, ids)
+		if len(ids) > 0 {
+			matches, err := cfg.DB.SearchFTS(ctx, db.SearchFTSParams{ProjectID: in.ProjectID, Query: in.Query, Limit: len(ids), Status: in.Status, Labels: in.Labels, ExcludeLabels: in.ExcludeLabels, AllowedIssueIDs: ids})
 			if err != nil {
 				return nil, internalAPIError(err)
 			}
-		}
-		for _, uid := range in.LexicalUIDs {
-			issue, ok := issues[uid]
-			if !ok || issue.ProjectID != in.ProjectID || (in.Status != "" && issue.Status != in.Status) || !labels.matches(byIssue[issue.ID]) {
-				continue
+			for _, hit := range matches {
+				row, err := makeHit(hit.Issue, 0)
+				if err != nil {
+					return nil, internalAPIError(err)
+				}
+				out.Body.Lexical = append(out.Body.Lexical, row)
 			}
-			row, err := makeHit(issue, 0)
-			if err != nil {
-				return nil, internalAPIError(err)
-			}
-			out.Body.Lexical = append(out.Body.Lexical, row)
 		}
 		return out, nil
 	})

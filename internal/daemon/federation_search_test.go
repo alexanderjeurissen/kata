@@ -374,7 +374,7 @@ func TestDirectSpokeSearchUsesHubResults(t *testing.T) {
 	require.NoError(t, spoke.DB.MaterializeFederatedProject(ctx, replica.ID))
 	lateLocal, err := spoke.DB.IssueByUID(ctx, late.UID, db.IncludeDeletedNo)
 	require.NoError(t, err)
-	_, _, _, err = hub.DB.EditIssue(ctx, db.EditIssueParams{IssueID: late.ID, Title: new("current title"), Body: new("current body"), Actor: "tester"})
+	_, _, _, err = hub.DB.EditIssue(ctx, db.EditIssueParams{IssueID: late.ID, Title: new("current needle title"), Body: new("current body"), Actor: "tester"})
 	require.NoError(t, err)
 	_, _, _, err = hub.DB.CloseIssue(ctx, late.ID, "done", "tester", "", nil)
 	require.NoError(t, err)
@@ -385,7 +385,7 @@ func TestDirectSpokeSearchUsesHubResults(t *testing.T) {
 	require.NoError(t, json.Unmarshal(raw, &body))
 	require.Len(t, body.Results, 1)
 	require.Equal(t, lateLocal.ID, body.Results[0].Issue.ID)
-	require.Equal(t, "current title", body.Results[0].Issue.Title)
+	require.Equal(t, "current needle title", body.Results[0].Issue.Title)
 	require.Equal(t, "current body", body.Results[0].Issue.Body)
 	require.Equal(t, "closed", body.Results[0].Issue.Status)
 	resp, raw = envGetRaw(t, spoke, fmt.Sprintf("/api/v1/projects/%d/search?q=needle&exclude_label=current-label", replica.ID))
@@ -393,6 +393,14 @@ func TestDirectSpokeSearchUsesHubResults(t *testing.T) {
 	require.NoError(t, json.Unmarshal(raw, &body))
 	for _, hit := range body.Results {
 		require.NotEqual(t, late.UID, hit.Issue.UID)
+	}
+	_, _, _, err = hub.DB.EditIssue(ctx, db.EditIssueParams{IssueID: late.ID, Title: new("current title"), Actor: "tester"})
+	require.NoError(t, err)
+	resp, raw = envGetRaw(t, spoke, fmt.Sprintf("/api/v1/projects/%d/search?q=needle&status=closed&label=current-label", replica.ID))
+	require.Equal(t, http.StatusOK, resp.StatusCode, string(raw))
+	require.NoError(t, json.Unmarshal(raw, &body))
+	for _, hit := range body.Results {
+		require.NotEqual(t, late.UID, hit.Issue.UID, "a stale local word match must not survive a hub text edit")
 	}
 }
 
