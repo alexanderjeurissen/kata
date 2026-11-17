@@ -153,6 +153,7 @@ type FederationBinding struct {
 	LastSyncAt    *time.Time
 }
 
+// IsDirectSpoke reports whether the binding is a spoke without a relay.
 func (b FederationBinding) IsDirectSpoke() bool {
 	return b.Role == FederationRoleSpoke && b.RelayConfig == nil
 }

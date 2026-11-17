@@ -8,6 +8,7 @@ import (
 	"go.kenn.io/kata/internal/db"
 )
 
+// FederationSearchRequest searches one shared project on its hub.
 type FederationSearchRequest struct {
 	ProjectID      int64    `path:"project_id"`
 	Authorization  string   `header:"Authorization"`
@@ -19,6 +20,7 @@ type FederationSearchRequest struct {
 	IncludeLexical bool     `query:"include_lexical,omitempty"`
 }
 
+// FederationSearchHit describes a matching issue from the hub.
 type FederationSearchHit struct {
 	Issue     db.Issue `json:"issue"`
 	Score     float64  `json:"score"`
@@ -27,6 +29,7 @@ type FederationSearchHit struct {
 	MatchedIn []string `json:"matched_in,omitempty"`
 }
 
+// FederationSearchResponse contains the hub's semantic and lexical matches.
 type FederationSearchResponse struct {
 	Body struct {
 		Results []FederationSearchHit `json:"results"`

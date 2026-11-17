@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -521,8 +522,8 @@ func TestDirectSpokeSearchSlowHub(t *testing.T) {
 				results <- response{mode: mode, err: err}
 				return
 			}
-			defer resp.Body.Close()
 			body, err := io.ReadAll(resp.Body)
+			err = errors.Join(err, resp.Body.Close())
 			results <- response{mode: mode, status: resp.StatusCode, body: string(body), err: err}
 		}()
 	}
