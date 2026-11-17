@@ -896,7 +896,7 @@ type SearchHit struct {
 	Issue     IssueSummary `json:"issue"`
 	Score     float64      `json:"score"`
 	MatchedIn []string     `json:"matched_in"`
-	Remote    bool         `json:"remote,omitempty"`
+	Remote    bool         `json:"remote,omitempty" jsonschema:"Issue has not synced locally; its UID is the stable ref"`
 }
 
 // SearchOutput reports the effective mode and any semantic fallback.
