@@ -20,30 +20,13 @@ func RunRelayCrossLinkResetHistory(t *testing.T, root db.Storage, backend Backen
 	t.Cleanup(func() { require.NoError(t, hub.Close()) })
 	leaf := backend.Open(t)
 	t.Cleanup(func() { require.NoError(t, leaf.Close()) })
-	_, private, err := ed25519.GenerateKey(nil)
-	require.NoError(t, err)
-	signer := db.RootAttributionSigner{AuthorityUID: root.InstanceUID(), PrivateKey: private}
-	var projects [2]db.Project
-	var issues [2]db.Issue
-	for i, name := range []string{"reset-source", "reset-peer"} {
-		project, err := root.CreateProject(ctx, name)
-		require.NoError(t, err)
-		projects[i] = project
-		_, err = root.UpsertFederationBinding(ctx, db.FederationBinding{ProjectID: project.ID, Role: db.FederationRoleHub, HubProjectID: project.ID, HubProjectUID: project.UID, Enabled: true})
-		require.NoError(t, err)
-		public := signer.PrivateKey.Public().(ed25519.PublicKey)
-		require.NoError(t, root.PinRootAuthority(ctx, db.RootKeyPin{ProjectUID: project.UID, AuthorityUID: root.InstanceUID(), KeyID: db.RootPublicKeyID(public), PublicKey: public}))
-		issues[i], _, err = root.CreateIssue(db.WithRootAttribution(ctx, signer, "root-member"), db.CreateIssueParams{ProjectID: project.ID, Author: "root-member", Title: name})
-		require.NoError(t, err)
-	}
-	params := db.CreateLinkParams{FromIssueID: issues[0].ID, ToIssueID: issues[1].ID, Type: "blocks", Author: "root-member"}
-	_, _, err = root.CreateLinkAndEvent(db.WithRootAttribution(ctx, signer, "root-member"), params, db.LinkEventParams{EventType: "issue.linked", EventIssueID: issues[0].ID, Actor: "root-member", FromUID: issues[0].UID, ToUID: issues[1].UID, FromShortID: issues[0].ShortID, ToShortID: issues[1].ShortID})
-	require.NoError(t, err)
+	fixture := NewRelaySharedAccessFixture(t, root)
+	projects, issues, signer := fixture.Projects, fixture.Issues, fixture.Signer
 	spokeUID := "00000000000000000000000008"
 	unlink := newRemoteEvent(t, projects[0], &issues[0].UID, "issue.unlinked", "member", spokeUID, time.Now().Add(time.Second).UnixMilli(), jsontext.Value(`{"issue_uid":"`+issues[0].UID+`","from_uid":"`+issues[0].UID+`","to_uid":"`+issues[1].UID+`","link_from_uid":"`+issues[0].UID+`","link_to_uid":"`+issues[1].UID+`","type":"blocks"}`))
 	unlink.RelatedIssueUID = &issues[1].UID
 	unlink.ContentHash = remoteEventHash(t, unlink)
-	_, err = root.IngestFederationEvents(ctx, db.FederationIngestParams{ProjectID: projects[0].ID, SpokeInstanceUID: spokeUID, Events: []db.FederationIngestEvent{{SourceEventID: 1, Event: unlink}}})
+	_, err := root.IngestFederationEvents(ctx, db.FederationIngestParams{ProjectID: projects[0].ID, SpokeInstanceUID: spokeUID, Events: []db.FederationIngestEvent{{SourceEventID: 1, Event: unlink}}})
 	require.NoError(t, err)
 	peerBinding, peerEpoch := setupRelayHop(t, root, hub, projects[1], "reset-peer-hub", true)
 	binding, bindingEpoch := setupRelayHop(t, root, hub, projects[0], "reset-hub", true)
@@ -62,7 +45,7 @@ func RunRelayCrossLinkResetHistory(t *testing.T, root db.Storage, backend Backen
 	require.NoError(t, err)
 	require.Empty(t, linkTargetUIDs(t, hub, hubIssue.ID), "forwarded events preserve the direct unlink")
 	require.Empty(t, linkTargetUIDs(t, root, issues[0].ID))
-	_, _, err = root.CreateLinkAndEvent(db.WithRootAttribution(ctx, signer, "root-member"), db.CreateLinkParams{FromIssueID: issues[0].ID, ToIssueID: issues[1].ID, Type: "parent", Author: "root-member"}, db.LinkEventParams{EventType: "issue.linked", EventIssueID: issues[0].ID, Actor: "root-member", FromUID: issues[0].UID, ToUID: issues[1].UID, FromShortID: issues[0].ShortID, ToShortID: issues[1].ShortID})
+	_, _, err = root.CreateLinkAndEvent(db.WithRootAttribution(ctx, signer, "member"), db.CreateLinkParams{FromIssueID: issues[0].ID, ToIssueID: issues[1].ID, Type: "parent", Author: "member"}, db.LinkEventParams{EventType: "issue.linked", EventIssueID: issues[0].ID, Actor: "member", FromUID: issues[0].UID, ToUID: issues[1].UID, FromShortID: issues[0].ShortID, ToShortID: issues[1].ShortID})
 	require.NoError(t, err)
 	rootResets := root.(db.RelayResetStore)
 	relayState := func(store db.Storage) []db.ImportRecord {

@@ -20,7 +20,7 @@ type RelaySharedAccessFixture struct {
 }
 
 // RunRelayEventReleasePeerAccess checks access before offering events.
-func RunRelayEventReleasePeerAccess(t *testing.T, store db.Storage) {
+func RunRelayEventReleasePeerAccess(t *testing.T, store db.Storage, backend Backend) {
 	ctx := t.Context()
 	fixture := NewRelaySharedAccessFixture(t, store)
 	features := db.WithRelayPeerEventFeatures(ctx, db.SupportedEventFeatures)
@@ -96,6 +96,43 @@ func RunRelayEventReleasePeerAccess(t *testing.T, store db.Storage) {
 	require.Equal(t, crossing.UID, next[0].SourceUID)
 	require.Equal(t, crossing.ContentHash, next[0].SourceHash)
 	require.NoError(t, store.AckRelayDeliveries(ctx, binding, 1, db.RelayStreamEvent, next[0].Sequence, next[0].Digest))
+	// The hub has not received the linked peer project.
+	hub := backend.Open(t)
+	t.Cleanup(func() { require.NoError(t, hub.Close()) })
+	upstream, upstreamEpoch := setupRelayHop(t, store, hub, fixture.Projects[0], "unresolved-hub", true)
+	syncRelayHop(features, t, store, hub, upstream, upstreamEpoch, db.RelayStreamEvent, db.RelayStreamReceipt)
+	hubProject, err := hub.ProjectByUID(ctx, fixture.Projects[0].UID)
+	require.NoError(t, err)
+	policy, err := hub.ProjectAccessPolicy(ctx, hubProject.UID)
+	require.NoError(t, err)
+	parent, _, err := hub.CreateAPIToken(ctx, db.CreateAPITokenParams{Actor: "member", AdminActor: "admin", TeamUIDs: policy.TeamUIDs, PlaintextToken: "unresolved-leaf-parent-test-token"})
+	require.NoError(t, err)
+	grant, err := hub.CreateRelayEnrollment(ctx, db.CreateRelayEnrollmentParams{ProjectID: hubProject.ID, ParentTokenID: parent.ID, SpokeInstanceUID: "00000000000000000000000008", ProtocolVersion: db.RelayProtocolVersion, Token: "unresolved-leaf-relay-test-token"})
+	require.NoError(t, err)
+	downstream, epoch := grant.Enrollment.RelayBindingUID, grant.Enrollment.RelayResetEpoch
+
+	// Earlier ordinary events may be offered as a prefix. The link must stop
+	// an old peer before the missing endpoint's project reaches this hub.
+	for {
+		items, err := hub.PendingRelayDeliveries(ctx, downstream, db.RelayStreamEvent, 100)
+		if err != nil {
+			require.ErrorIs(t, err, db.ErrUnsupportedEventFeatures)
+			break
+		}
+		require.NotEmpty(t, items)
+		last := items[len(items)-1]
+		require.NoError(t, hub.AckRelayDeliveries(ctx, downstream, epoch, db.RelayStreamEvent, last.Sequence, last.Digest))
+	}
+	items, err := hub.PendingRelayDeliveries(features, downstream, db.RelayStreamEvent, 100)
+	require.NoError(t, err)
+	require.NotEmpty(t, items)
+	found := false
+	for _, item := range items {
+		if item.SourceUID == crossing.UID {
+			found = true
+		}
+	}
+	require.True(t, found)
 }
 
 // NewRelaySharedAccessFixture enrolls the same native pair for storage and
@@ -144,41 +181,4 @@ func NewRelaySharedAccessFixture(t *testing.T, store db.Storage) RelaySharedAcce
 	require.NoError(t, err)
 
 	return RelaySharedAccessFixture{Projects: projects, Issues: issues, Grant: grant, Team: team, Signer: db.RootAttributionSigner{AuthorityUID: store.InstanceUID(), PrivateKey: private}}
-}
-
-// RunRelayUnresolvedLinkFeatures checks version negotiation when a hub has not
-// received the linked issue's project yet.
-func RunRelayUnresolvedLinkFeatures(t *testing.T, root db.Storage, backend Backend) {
-	ctx := t.Context()
-	features := db.WithRelayPeerEventFeatures(ctx, db.SupportedEventFeatures)
-	hub := backend.Open(t)
-	t.Cleanup(func() { require.NoError(t, hub.Close()) })
-	fixture := NewRelaySharedAccessFixture(t, root)
-	upstream, upstreamEpoch := setupRelayHop(t, root, hub, fixture.Projects[0], "unresolved-hub", true)
-	syncRelayHop(features, t, root, hub, upstream, upstreamEpoch, db.RelayStreamEvent, db.RelayStreamReceipt)
-	hubProject, err := hub.ProjectByUID(ctx, fixture.Projects[0].UID)
-	require.NoError(t, err)
-	policy, err := hub.ProjectAccessPolicy(ctx, hubProject.UID)
-	require.NoError(t, err)
-	parent, _, err := hub.CreateAPIToken(ctx, db.CreateAPITokenParams{Actor: "member", AdminActor: "admin", TeamUIDs: policy.TeamUIDs, PlaintextToken: "unresolved-leaf-parent-test-token"})
-	require.NoError(t, err)
-	grant, err := hub.CreateRelayEnrollment(ctx, db.CreateRelayEnrollmentParams{ProjectID: hubProject.ID, ParentTokenID: parent.ID, SpokeInstanceUID: "00000000000000000000000008", ProtocolVersion: db.RelayProtocolVersion, Token: "unresolved-leaf-relay-test-token"})
-	require.NoError(t, err)
-	downstream, epoch := grant.Enrollment.RelayBindingUID, grant.Enrollment.RelayResetEpoch
-
-	// Earlier ordinary events may be offered as a prefix. The link must stop
-	// an old peer before the missing endpoint's project reaches this hub.
-	for {
-		items, err := hub.PendingRelayDeliveries(ctx, downstream, db.RelayStreamEvent, 100)
-		if err != nil {
-			require.ErrorIs(t, err, db.ErrUnsupportedEventFeatures)
-			break
-		}
-		require.NotEmpty(t, items)
-		last := items[len(items)-1]
-		require.NoError(t, hub.AckRelayDeliveries(ctx, downstream, epoch, db.RelayStreamEvent, last.Sequence, last.Digest))
-	}
-	items, err := hub.PendingRelayDeliveries(features, downstream, db.RelayStreamEvent, 100)
-	require.NoError(t, err)
-	require.NotEmpty(t, items)
 }
