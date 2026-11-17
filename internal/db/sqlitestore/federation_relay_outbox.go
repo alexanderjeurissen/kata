@@ -90,7 +90,6 @@ func (d *Store) PendingRelayDeliveries(ctx context.Context, bindingUID, stream s
 				return err
 			}
 			output, ids = output[:len(events)], ids[:len(events)]
-
 		}
 		for _, id := range ids {
 			if _, err := tx.ExecContext(ctx, `UPDATE federation_relay_outbox SET emitted=1 WHERE id=?`, id); err != nil {
