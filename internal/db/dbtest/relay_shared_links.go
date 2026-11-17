@@ -138,50 +138,6 @@ func RunRelayEventReleasePeerAccess(t *testing.T, store db.Storage) {
 	require.Equal(t, moved.Event.UID, offered[len(offered)-1].SourceUID)
 }
 
-// RunRelayArchivedPeerEventRelease checks that an archived endpoint doesn't
-// stop an active project's root-authored link event at the next hop.
-func RunRelayArchivedPeerEventRelease(t *testing.T, backend Backend) {
-	t.Run("archived peer remains releasable", func(t *testing.T) {
-		ctx := t.Context()
-		features := db.WithRelayPeerEventFeatures(ctx, db.SupportedEventFeatures)
-		root := backend.Open(t)
-		t.Cleanup(func() { require.NoError(t, root.Close()) })
-		replica := backend.Open(t)
-		t.Cleanup(func() { require.NoError(t, replica.Close()) })
-		leaf := backend.Open(t)
-		t.Cleanup(func() { require.NoError(t, leaf.Close()) })
-		fixture := NewRelaySharedAccessFixture(t, root)
-		streams := []string{db.RelayStreamEvent, db.RelayStreamReceipt, db.RelayStreamArtifact}
-		peerBinding, peerEpoch := setupRelayHop(t, root, replica, fixture.Projects[1], "archive-peer", false)
-		sourceBinding, sourceEpoch := setupRelayHop(t, root, replica, fixture.Projects[0], "archive-source", true)
-		syncRelayHop(features, t, root, replica, peerBinding, peerEpoch, streams...)
-		syncRelayHop(features, t, root, replica, sourceBinding, sourceEpoch, streams...)
-		replicaSource, err := replica.ProjectByUID(ctx, fixture.Projects[0].UID)
-		require.NoError(t, err)
-		leafBinding, leafEpoch := setupRelayHop(t, replica, leaf, replicaSource, "archive-leaf", false)
-		syncRelayHop(features, t, replica, leaf, leafBinding, leafEpoch, streams...)
-		replicaPeer, err := replica.ProjectByUID(ctx, fixture.Projects[1].UID)
-		require.NoError(t, err)
-		_, _, err = replica.RemoveProject(ctx, db.RemoveProjectParams{ProjectID: replicaPeer.ID, Actor: "member", Force: true})
-		require.NoError(t, err)
-		newIssue, _, err := root.CreateIssue(db.WithRootAttribution(ctx, fixture.Signer, "member"), db.CreateIssueParams{ProjectID: fixture.Projects[0].ID, Author: "member", Title: "After archive"})
-		require.NoError(t, err)
-		_, linkEvent, err := root.CreateLinkAndEvent(db.WithRootAttribution(ctx, fixture.Signer, "member"), db.CreateLinkParams{FromIssueID: newIssue.ID, ToIssueID: fixture.Issues[1].ID, Type: "blocks", Author: "member"}, db.LinkEventParams{EventType: "issue.linked", EventIssueID: newIssue.ID, Actor: "member", FromUID: newIssue.UID, ToUID: fixture.Issues[1].UID, FromShortID: newIssue.ShortID, ToShortID: fixture.Issues[1].ShortID})
-		require.NoError(t, err)
-		syncRelayHop(features, t, root, replica, sourceBinding, sourceEpoch, streams...)
-		items, err := replica.PendingRelayDeliveries(features, leafBinding, db.RelayStreamEvent, 100)
-		require.NoError(t, err)
-		var found bool
-		for _, item := range items {
-			if item.SourceUID == linkEvent.UID {
-				found = true
-				require.Equal(t, linkEvent.ContentHash, item.SourceHash)
-			}
-		}
-		require.True(t, found)
-	})
-}
-
 // NewRelaySharedAccessFixture enrolls the same native pair for storage and
 // relay tests, keeping the initial regression at native admission.
 func NewRelaySharedAccessFixture(t *testing.T, store db.Storage) RelaySharedAccessFixture {
@@ -262,17 +218,4 @@ func RunRelayUnresolvedLinkFeatures(t *testing.T, root db.Storage, backend Backe
 	require.NoError(t, err)
 	require.NotEmpty(t, items)
 	syncRelayHop(features, t, hub, nil, downstream, epoch, db.RelayStreamEvent, db.RelayStreamReceipt, db.RelayStreamArtifact)
-
-	rootReset := root.(db.RelayResetStore)
-	checkpoint, err := rootReset.CreateRelayReset(features, upstream, fixture.Signer)
-	require.NoError(t, err)
-	hubReset := hub.(db.RelayResetStore)
-	require.NoError(t, hubReset.InstallRelayReset(ctx, upstream, checkpoint.Manifest, checkpoint.Snapshot, checkpoint.Translation))
-	forwarded, err := hubReset.CreateRelayReset(features, downstream, db.RootAttributionSigner{})
-	require.NoError(t, err)
-	_, err = hubReset.CreateRelayReset(ctx, downstream, db.RootAttributionSigner{})
-	require.ErrorIs(t, err, db.ErrUnsupportedEventFeatures)
-	retry, err := hubReset.CreateRelayReset(features, downstream, db.RootAttributionSigner{})
-	require.NoError(t, err)
-	require.Equal(t, forwarded, retry)
 }

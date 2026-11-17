@@ -161,10 +161,6 @@ var storageScenarios = []scenario{
 		return nil
 	}},
 	{name: "relay cross project removal", run: func(t *testing.T, store db.Storage) error { RunRelayCrossProjectRemoval(t, store); return nil }},
-	{name: "relay archived peer event release", runWithBackend: func(t *testing.T, _ db.Storage, backend Backend) error {
-		RunRelayArchivedPeerEventRelease(t, backend)
-		return nil
-	}},
 	{name: "relay unresolved link features", runWithBackend: func(t *testing.T, store db.Storage, backend Backend) error {
 		RunRelayUnresolvedLinkFeatures(t, store, backend)
 		return nil

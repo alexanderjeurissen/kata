@@ -24,11 +24,21 @@ func RunRelayCrossProjectBoundary(t *testing.T, store db.Storage, backend Backen
 	syncRelayHop(features, t, store, replica, sourceBinding, sourceEpoch, db.RelayStreamEvent, db.RelayStreamReceipt, db.RelayStreamArtifact)
 	replicaSource, err := replica.ProjectByUID(ctx, fixture.Projects[0].UID)
 	require.NoError(t, err)
+	policy, err := replica.ProjectAccessPolicy(ctx, replicaSource.UID)
+	require.NoError(t, err)
+	replicaParent, _, err := replica.CreateAPIToken(ctx, db.CreateAPITokenParams{Actor: "member", AdminActor: "admin", TeamUIDs: policy.TeamUIDs, PlaintextToken: "archive-downstream-parent-test-token"})
+	require.NoError(t, err)
+	downstream, err := replica.CreateRelayEnrollment(ctx, db.CreateRelayEnrollmentParams{ProjectID: replicaSource.ID, ParentTokenID: replicaParent.ID, SpokeInstanceUID: "00000000000000000000000007", ProtocolVersion: db.RelayProtocolVersion, Token: "archive-downstream-relay-test-token"})
+	require.NoError(t, err)
 	replicaIssue, err := replica.IssueByUID(ctx, fixture.Issues[0].UID, db.IncludeDeletedYes)
 	require.NoError(t, err)
 	require.Equal(t, []string{fixture.Issues[1].UID}, linkTargetUIDs(t, replica, replicaIssue.ID))
 	replicaPeer, err := replica.ProjectByUID(ctx, fixture.Projects[1].UID)
 	require.NoError(t, err)
+	replicaPeerIssue, err := replica.IssueByUID(ctx, fixture.Issues[1].UID, db.IncludeDeletedYes)
+	require.NoError(t, err)
+	_, err = replica.CreateLink(ctx, db.CreateLinkParams{FromIssueID: replicaIssue.ID, ToIssueID: replicaPeerIssue.ID, Type: "related", Author: "member"})
+	require.ErrorIs(t, err, db.ErrFederationCrossProjectBoundary)
 	_, _, err = replica.RemoveProject(ctx, db.RemoveProjectParams{ProjectID: replicaPeer.ID, Actor: "member", Force: true})
 	require.NoError(t, err)
 	binding, err := replica.FederationBindingByProject(ctx, replicaSource.ID)
@@ -43,6 +53,24 @@ func RunRelayCrossProjectBoundary(t *testing.T, store db.Storage, backend Backen
 	binding, err = replica.SetRelayBindingConfig(ctx, replicaSource.ID, restored, revoked)
 	require.NoError(t, err)
 	require.False(t, binding.RelayConfig.UpstreamRevoked)
+	newIssue, _, err := store.CreateIssue(db.WithRootAttribution(ctx, fixture.Signer, "member"), db.CreateIssueParams{ProjectID: fixture.Projects[0].ID, Author: "member", Title: "After archive"})
+	require.NoError(t, err)
+	_, linkEvent, err := store.CreateLinkAndEvent(db.WithRootAttribution(ctx, fixture.Signer, "member"), db.CreateLinkParams{FromIssueID: newIssue.ID, ToIssueID: fixture.Issues[1].ID, Type: "blocks", Author: "member"}, db.LinkEventParams{EventType: "issue.linked", EventIssueID: newIssue.ID, Actor: "member", FromUID: newIssue.UID, ToUID: fixture.Issues[1].UID, FromShortID: newIssue.ShortID, ToShortID: fixture.Issues[1].ShortID})
+	require.NoError(t, err)
+	syncRelayHop(features, t, store, replica, sourceBinding, sourceEpoch, db.RelayStreamEvent, db.RelayStreamReceipt, db.RelayStreamArtifact)
+	received, err := replica.IssueByUID(ctx, newIssue.UID, db.IncludeDeletedYes)
+	require.NoError(t, err)
+	require.Equal(t, newIssue.Title, received.Title)
+	items, err := replica.PendingRelayDeliveries(features, downstream.Enrollment.RelayBindingUID, db.RelayStreamEvent, 100)
+	require.NoError(t, err)
+	var found bool
+	for _, item := range items {
+		if item.SourceUID == linkEvent.UID {
+			found = true
+			require.Equal(t, linkEvent.ContentHash, item.SourceHash)
+		}
+	}
+	require.True(t, found)
 
 	first, err := store.CreateProject(ctx, "first-project")
 	require.NoError(t, err)
@@ -89,30 +117,6 @@ func RunRelayCrossProjectBoundary(t *testing.T, store db.Storage, backend Backen
 		require.NoError(t, store.PinRootAuthority(ctx, db.RootKeyPin{ProjectUID: p.UID, AuthorityUID: store.InstanceUID(), KeyID: db.RootPublicKeyID(public), PublicKey: public}))
 	}
 	rootUID := "00000000000000000000000002"
-	var replicaIssues [2]db.Issue
-	var replicaProject db.Project
-	for i, name := range []string{"replica-source", "replica-peer"} {
-		project, err := store.CreateProject(ctx, name)
-		require.NoError(t, err)
-		if i == 0 {
-			replicaProject = project
-		}
-		_, err = store.UpsertFederationBinding(ctx, db.FederationBinding{ProjectID: project.ID, Role: db.FederationRoleSpoke, HubURL: "https://hub.example", HubProjectID: first.ID, HubProjectUID: project.UID, Actor: "member", PushEnabled: true, Enabled: true})
-		require.NoError(t, err)
-		require.NoError(t, store.PinRootAuthority(ctx, db.RootKeyPin{ProjectUID: project.UID, AuthorityUID: rootUID, KeyID: db.RootPublicKeyID(public), PublicKey: public}))
-		if i == 0 {
-			_, err = store.SetRelayBindingConfig(ctx, project.ID, db.RelayBindingConfig{ProtocolVersion: db.RelayProtocolVersion, BindingUID: "00000000000000000000000014", AuthorityUID: rootUID, UpstreamInstanceUID: rootUID, HubPath: []string{rootUID, store.InstanceUID()}, LocalActor: "member", ServeDownstream: true, ResetEpoch: 1})
-			require.NoError(t, err)
-		}
-		replicaIssues[i], _, err = store.CreateIssue(ctx, db.CreateIssueParams{ProjectID: project.ID, Title: name, Author: "member"})
-		require.NoError(t, err)
-	}
-	replicaParent, _, err := store.CreateAPIToken(ctx, db.CreateAPITokenParams{Actor: "member", AdminActor: "admin", PlaintextToken: "replica-boundary-parent-token"})
-	require.NoError(t, err)
-	_, err = store.CreateRelayEnrollment(ctx, db.CreateRelayEnrollmentParams{ProjectID: replicaProject.ID, ParentTokenID: replicaParent.ID, SpokeInstanceUID: "00000000000000000000000007", ProtocolVersion: db.RelayProtocolVersion, Token: "replica-boundary-relay-token"})
-	require.NoError(t, err)
-	_, err = store.CreateLink(ctx, db.CreateLinkParams{FromIssueID: replicaIssues[0].ID, ToIssueID: replicaIssues[1].ID, Type: "related", Author: "member"})
-	require.ErrorIs(t, err, db.ErrFederationCrossProjectBoundary)
 
 	// An existing legacy spoke can also have local cross-project links. The
 	// negotiated setup path must return the same boundary sentinel without

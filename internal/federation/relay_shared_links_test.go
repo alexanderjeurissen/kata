@@ -42,6 +42,14 @@ func TestRelaySharedLinksAcrossHops(t *testing.T) {
 				_, _, err := root.store.CreateLinkAndEvent(db.WithRootAttribution(ctx, root.signer, root.account), db.CreateLinkParams{FromIssueID: issues[0].ID, ToIssueID: issues[1].ID, Type: "blocks", Author: root.account},
 					db.LinkEventParams{EventType: "issue.linked", EventIssueID: issues[0].ID, Actor: root.account, FromUID: issues[0].UID, ToUID: issues[1].UID, FromShortID: issues[0].ShortID, ToShortID: issues[1].ShortID})
 				require.NoError(t, err)
+				rootCtx := db.WithRootAttribution(ctx, root.signer, root.account)
+				newParent, _, err := root.store.CreateIssue(rootCtx, db.CreateIssueParams{ProjectID: projects[0].ID, Title: "New parent", Author: root.account})
+				require.NoError(t, err)
+				linkEvent := func(eventType string, parent db.Issue) db.LinkEventParams {
+					return db.LinkEventParams{EventType: eventType, EventIssueID: issues[0].ID, Actor: root.account, FromUID: issues[0].UID, ToUID: parent.UID, FromShortID: issues[0].ShortID, ToShortID: parent.ShortID}
+				}
+				oldLink, _, err := root.store.CreateLinkAndEvent(rootCtx, db.CreateLinkParams{FromIssueID: issues[0].ID, ToIssueID: issues[1].ID, Type: "parent", Author: root.account}, linkEvent("issue.linked", issues[1]))
+				require.NoError(t, err)
 				order := []int{0, 1}
 				if reverse {
 					order = []int{1, 0}
@@ -52,8 +60,28 @@ func TestRelaySharedLinksAcrossHops(t *testing.T) {
 					}
 					links, err := nodes[0].store.LinksByIssue(ctx, issueIDForRelayMatrix(t, nodes[0], issues[0].UID))
 					require.NoError(t, err)
-					require.Len(t, links, 1)
-					require.Equal(t, issues[1].UID, links[0].ToIssueUID)
+					require.Len(t, links, 2)
+					for _, link := range links {
+						require.Equal(t, issues[1].UID, link.ToIssueUID)
+					}
+				}
+				_, err = root.store.(db.ParentLinkReplacementStorage).ReplaceParentAndEvents(rootCtx, db.ReplaceParentAndEventsParams{
+					ExpectedParentLinkID: oldLink.ID, ExpectedParentIssueID: issues[1].ID,
+					Link:        db.CreateLinkParams{FromIssueID: issues[0].ID, ToIssueID: newParent.ID, Type: "parent", Author: root.account},
+					UnlinkEvent: linkEvent("issue.unlinked", issues[1]), LinkEvent: linkEvent("issue.linked", newParent),
+				})
+				require.NoError(t, err)
+				for _, nodes := range [][]*relayMatrixNode{hubs, leaves} {
+					for _, i := range order {
+						syncRelayMatrixNode(t, nodes[i])
+					}
+					childID := issueIDForRelayMatrix(t, nodes[0], issues[0].UID)
+					parent, err := nodes[0].store.ParentOf(ctx, childID)
+					require.NoError(t, err)
+					require.Equal(t, newParent.UID, parent.ToIssueUID)
+					links, err := nodes[0].store.LinksByIssue(ctx, childID)
+					require.NoError(t, err)
+					require.Len(t, links, 2)
 				}
 			})
 		}
