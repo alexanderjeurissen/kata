@@ -91,10 +91,15 @@ func TestSearchFanoutUsesStableGlobalOrdering(t *testing.T) {
 					projectName = "hub-project"
 					shortID = "hbb1"
 				}
-				writeJSON(writer, map[string]any{
-					"query": "shared", "mode": "lexical",
-					"results": []any{map[string]any{"issue": issueJSON(1, projectName, shortID), "score": 2.0, "matched_in": []string{"title"}}},
-				})
+				issue := issueJSON(1, projectName, shortID)
+				hit := map[string]any{"issue": issue, "score": 2.0, "matched_in": []string{"title"}}
+				if projectName == "hub-project" {
+					issue["id"] = 0
+					hit["remote"] = true
+					hit["oversized"] = true
+					hit["web_url"] = "https://hub.example/issue"
+				}
+				writeJSON(writer, map[string]any{"query": "shared", "mode": "lexical", "results": []any{hit}})
 				return true
 			})
 
@@ -106,7 +111,13 @@ func TestSearchFanoutUsesStableGlobalOrdering(t *testing.T) {
 			require.NoError(t, err)
 			require.False(t, result.IsError)
 			hits := result.StructuredContent.(map[string]any)["results"].([]any)
-			require.Equal(t, "hub-project#hbb1", hits[0].(map[string]any)["issue"].(map[string]any)["qualified_ref"])
+			remote := hits[0].(map[string]any)
+			remoteIssue := remote["issue"].(map[string]any)
+			require.Equal(t, "01arz3ndektsv4rrffq69g5fav", remoteIssue["ref"])
+			require.Equal(t, "hub-project#01arz3ndektsv4rrffq69g5fav", remoteIssue["qualified_ref"])
+			require.Equal(t, "https://hub.example/issue", remoteIssue["web_url"])
+			require.Equal(t, true, remote["remote"])
+			require.Equal(t, true, remote["oversized"])
 			require.Equal(t, "spoke-project#spk1", hits[1].(map[string]any)["issue"].(map[string]any)["qualified_ref"])
 		})
 	}

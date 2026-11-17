@@ -28,7 +28,7 @@ type hybridParams struct {
 	ExcludeLabels   []string
 	AllowedIssueIDs []int64
 	IssueScope      *db.APITokenScope
-	RemoteVector    func(context.Context, hybridParams, int, []db.SearchCandidate) ([]db.SearchCandidate, []db.SearchCandidate, bool, error)
+	RemoteVector    func(context.Context, hybridParams, int, []db.SearchCandidate) ([]db.SearchCandidate, []db.SearchCandidate, error)
 }
 
 type hybridResult struct {
@@ -133,7 +133,7 @@ func hybridSearch(ctx context.Context, store db.Storage, idx *vector.Index, emb 
 	if mode == modeHybrid || mode == modeSemantic {
 		if p.RemoteVector != nil {
 			var hubLexical []db.SearchCandidate
-			vector, hubLexical, vecBounded, vecErr = p.RemoteVector(ctx, p, fetch, lexical)
+			vector, hubLexical, vecErr = p.RemoteVector(ctx, p, fetch, lexical)
 			if vecErr == nil && mode == modeHybrid {
 				lexical = hubLexical
 			}
@@ -310,7 +310,7 @@ func runVectorLeg(ctx context.Context, store db.Storage, idx *vector.Index, emb 
 	return out, false, nil
 }
 
-func hydrateRemoteHits(ctx context.Context, store db.Storage, hits []api.FederationSearchHit, p hybridParams, fetch int) ([]db.SearchCandidate, error) {
+func hydrateRemoteHits(ctx context.Context, store db.Storage, hits []api.FederationSearchHit, p hybridParams) ([]db.SearchCandidate, error) {
 	project, err := store.ProjectByID(ctx, p.ProjectID)
 	if err != nil {
 		return nil, err
@@ -344,7 +344,7 @@ func hydrateRemoteHits(ctx context.Context, store db.Storage, hits []api.Federat
 		}
 		candidates = append(candidates, db.SearchCandidate{Issue: issue, Score: hit.Score, MatchedIn: matched, Remote: remote, Hub: true, WebURL: hit.WebURL, Oversized: hit.Oversized})
 	}
-	return truncate(candidates, fetch), nil
+	return candidates, nil
 }
 
 // hydrateVectorHits rolls chunk hits up to issues and hydrates them against

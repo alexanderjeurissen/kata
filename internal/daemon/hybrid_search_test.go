@@ -270,29 +270,21 @@ func TestHybridSearchScopedSemanticFailsClosedAndAutoUsesLexical(t *testing.T) {
 	require.Contains(t, result.DegradedReason, "issue-scoped")
 	require.Len(t, result.Hits, 1)
 	require.Equal(t, issue.ID, result.Hits[0].Issue.ID)
-}
 
-func TestHybridSearchScopedRemoteUsesLexical(t *testing.T) {
-	ctx := t.Context()
-	store := newReconcilerTestStore(t)
-	project, err := store.CreateProject(ctx, "example-project")
-	require.NoError(t, err)
-	issue, _, err := store.CreateIssue(ctx, db.CreateIssueParams{ProjectID: project.ID, Title: "delegated login race", Author: "member"})
-	require.NoError(t, err)
-	remote := func(context.Context, hybridParams, int, []db.SearchCandidate) ([]db.SearchCandidate, []db.SearchCandidate, bool, error) {
+	remote := func(context.Context, hybridParams, int, []db.SearchCandidate) ([]db.SearchCandidate, []db.SearchCandidate, error) {
 		t.Fatal("issue-scoped search must not call the hub")
-		return nil, nil, false, nil
+		return nil, nil, nil
 	}
 	params := hybridParams{ProjectID: project.ID, Query: "login", Limit: 10, Requested: "semantic", AllowedIssueIDs: []int64{issue.ID}, RemoteVector: remote}
 	_, err = hybridSearch(ctx, store, nil, nil, params)
-	var modeErr *modeError
 	require.ErrorAs(t, err, &modeErr)
 	require.Equal(t, 503, modeErr.Status())
 	params.Requested = "auto"
-	result, err := hybridSearch(ctx, store, nil, nil, params)
+	result, err = hybridSearch(ctx, store, nil, nil, params)
 	require.NoError(t, err)
 	require.Equal(t, modeLexical, result.Mode)
 	require.True(t, result.Degraded)
+	require.Contains(t, result.DegradedReason, "issue-scoped")
 	require.Len(t, result.Hits, 1)
 	require.Equal(t, issue.ID, result.Hits[0].Issue.ID)
 }
@@ -1385,26 +1377,48 @@ func TestHydrateRemoteHitsUsesHubSnapshot(t *testing.T) {
 	require.NoError(t, err)
 	foreign, _, err := store.CreateIssue(ctx, db.CreateIssueParams{ProjectID: other.ID, Title: "other project", Author: "tester"})
 	require.NoError(t, err)
-	_, _, _, err = store.SoftDeleteIssue(ctx, local.ID, "tester")
+	_, err = store.CreateRecurrenceForIssue(ctx, db.CreateRecurrenceForIssueIn{
+		IssueID: local.ID, IfMatchRev: &local.Revision,
+		Recurrence: db.CreateRecurrenceIn{ProjectID: project.ID, Actor: "tester", Rule: "FREQ=WEEKLY", DTStart: "2026-08-03", Timezone: "UTC", Template: db.RecurrenceTemplate{Title: "Recurring"}},
+	})
 	require.NoError(t, err)
+	local, err = store.IssueByID(ctx, local.ID)
+	require.NoError(t, err)
+	require.NotNil(t, local.RecurrenceID)
 	hubIssue := local
 	hubIssue.Title = "current hub title"
-	hubIssue.DeletedAt = nil
+	hubIssue.Body = "current hub body"
+	hubIssue.Status = "closed"
+	hubIssue.ProjectID = other.ID
+	hubIssue.ProjectUID = other.UID
+	hubIssue.RecurrenceID = nil
 	hits := []api.FederationSearchHit{
 		{Issue: hubIssue, WebURL: "https://hub.example/issue", Score: 0.9},
 		{Issue: foreign, Oversized: true, Score: 0.8},
 	}
-	candidates, err := hydrateRemoteHits(ctx, store, hits, hybridParams{ProjectID: project.ID}, 10)
+	candidates, err := hydrateRemoteHits(ctx, store, hits, hybridParams{ProjectID: project.ID})
 	require.NoError(t, err)
 	require.Len(t, candidates, 2)
-	require.Zero(t, candidates[0].Issue.ID)
+	require.Equal(t, local.ID, candidates[0].Issue.ID)
+	require.Equal(t, local.ShortID, candidates[0].Issue.ShortID)
+	require.Equal(t, local.RecurrenceID, candidates[0].Issue.RecurrenceID)
+	require.Equal(t, project.ID, candidates[0].Issue.ProjectID)
+	require.Equal(t, project.UID, candidates[0].Issue.ProjectUID)
 	require.Equal(t, "current hub title", candidates[0].Issue.Title)
-	require.Nil(t, candidates[0].Issue.DeletedAt)
-	require.True(t, candidates[0].Remote)
+	require.Equal(t, "current hub body", candidates[0].Issue.Body)
+	require.Equal(t, "closed", candidates[0].Issue.Status)
+	require.False(t, candidates[0].Remote)
 	require.Zero(t, candidates[1].Issue.ID)
 	require.True(t, candidates[1].Remote)
 	require.True(t, candidates[1].Oversized)
+	_, _, _, err = store.SoftDeleteIssue(ctx, local.ID, "tester")
+	require.NoError(t, err)
+	candidates, err = hydrateRemoteHits(ctx, store, hits, hybridParams{ProjectID: project.ID})
+	require.NoError(t, err)
+	require.Zero(t, candidates[0].Issue.ID)
+	require.True(t, candidates[0].Remote)
+	require.Nil(t, candidates[0].Issue.RecurrenceID)
 	hits[0].Issue.UID = "invalid"
-	_, err = hydrateRemoteHits(ctx, store, hits, hybridParams{ProjectID: project.ID}, 10)
+	_, err = hydrateRemoteHits(ctx, store, hits, hybridParams{ProjectID: project.ID})
 	require.ErrorContains(t, err, "invalid hub issue UID")
 }

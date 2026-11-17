@@ -135,9 +135,6 @@ func registerFederationHandlers(humaAPI huma.API, cfg ServerConfig) {
 		if strings.TrimSpace(in.Query) == "" {
 			return nil, api.NewError(400, "validation", "query parameter q must be non-empty", "", nil)
 		}
-		if _, err := activeProjectByID(ctx, cfg.DB, in.ProjectID); err != nil {
-			return nil, err
-		}
 		limit := in.Limit
 		if limit <= 0 {
 			limit = 20

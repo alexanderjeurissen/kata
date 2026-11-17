@@ -31,9 +31,7 @@ func TestMergeRRFCombinesAndDedupes(t *testing.T) {
 	if len(merged) != 3 {
 		t.Fatalf("expected 3 unique issues, got %d", len(merged))
 	}
-}
 
-func TestMergeRRFDeduplicatesRemoteAndLocalUID(t *testing.T) {
 	local := db.SearchCandidate{Issue: db.Issue{ID: 7, UID: "01HZNQ7VFPK1XGD8R5MABXD4EX"}, MatchedIn: []string{"title"}}
 	remote := db.SearchCandidate{Issue: db.Issue{UID: local.Issue.UID}, Remote: true, Hub: true, MatchedIn: []string{"semantic"}}
 	got, err := mergeRRF([]db.SearchCandidate{local}, []db.SearchCandidate{remote}, 10)

@@ -830,12 +830,9 @@ func (c *claimHubClient) SearchShared(ctx context.Context, projectID int64, p hy
 	if c.transportErr != nil {
 		return nil, nil, c.transportErr
 	}
-	if limit <= 0 {
-		limit = 20
-	}
-	limit = min(limit, fetchCap)
+	includeLexical := p.Requested != "semantic"
 	rows := limit
-	if p.Requested != "semantic" {
+	if includeLexical {
 		rows += limit
 	}
 	maxBytes := int64(rows*(compactRowMaxBytes+hitEnvelopeBytes) + responseEnvelopeBytes)
@@ -844,7 +841,6 @@ func (c *claimHubClient) SearchShared(ctx context.Context, projectID int64, p hy
 		return nil, nil, err
 	}
 	count := int64(limit)
-	includeLexical := p.Requested != "semantic"
 	query := &generated.SearchFederationProjectQuery{Q: p.Query, Limit: &count, Label: p.Labels, ExcludeLabel: p.ExcludeLabels, IncludeLexical: &includeLexical}
 	if p.Status != "" {
 		status := generated.SearchFederationProjectQueryStatus(p.Status)

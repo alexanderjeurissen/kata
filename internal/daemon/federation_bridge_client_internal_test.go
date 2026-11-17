@@ -23,11 +23,12 @@ func (b *bridgeTrackedResponseBody) Close() error { b.closed = true; return nil 
 type bridgeResponseTransport struct {
 	body             *bridgeTrackedResponseBody
 	status, attempts int
+	length           int64
 }
 
 func (t *bridgeResponseTransport) RoundTrip(request *http.Request) (*http.Response, error) {
 	t.attempts++
-	return &http.Response{StatusCode: t.status, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: t.body, Request: request}, nil
+	return &http.Response{StatusCode: t.status, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: t.body, ContentLength: t.length, Request: request}, nil
 }
 
 // The generated bridge client must retain the prior bounded, single-attempt

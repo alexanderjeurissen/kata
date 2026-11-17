@@ -30,24 +30,30 @@ func TestSearchSharedRequestsLexicalForHybridOnly(t *testing.T) {
 func TestSearchSharedBoundsHubResponse(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
-		padding   int
+		body      string
+		length    int64
 		wantError bool
 	}{
-		{name: "large response", padding: 1 << 20},
-		{name: "both legs fit the bound", padding: 2 << 20},
-		{name: "oversized response", padding: 3 << 20, wantError: true},
+		{name: "both legs fit the bound", body: `{"results":[],"padding":"` + strings.Repeat("x", 2<<20) + `"}`},
+		{name: "oversized response", body: `{"results":[],"padding":"` + strings.Repeat("x", 3<<20) + `"}`, wantError: true},
+		{name: "declared size", body: "{}", length: 14 << 20, wantError: true},
+		{name: "malformed", body: "{", wantError: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			payload := `{"results":[],"padding":"` + strings.Repeat("x", tc.padding) + `"}`
-			reader := strings.NewReader(payload)
+			reader := strings.NewReader(tc.body)
 			body := &bridgeTrackedResponseBody{Reader: reader}
-			transport := &bridgeResponseTransport{body: body, status: http.StatusOK}
+			transport := &bridgeResponseTransport{body: body, status: http.StatusOK, length: tc.length}
 			client := claimHubClient{baseURL: "https://hub.example", client: &http.Client{Transport: transport}}
-
 			hits, _, err := client.SearchShared(t.Context(), 1, hybridParams{Query: "test"}, 20)
 			if tc.wantError {
-				require.ErrorContains(t, err, "hub search response exceeds")
-				require.LessOrEqual(t, len(payload)-reader.Len(), 40*(compactRowMaxBytes+hitEnvelopeBytes)+responseEnvelopeBytes+1)
+				require.Error(t, err)
+				if tc.length > 0 {
+					require.Equal(t, len(tc.body), reader.Len())
+				}
+				if tc.name == "oversized response" {
+					require.ErrorContains(t, err, "hub search response exceeds")
+					require.LessOrEqual(t, len(tc.body)-reader.Len(), 40*(compactRowMaxBytes+hitEnvelopeBytes)+responseEnvelopeBytes+1)
+				}
 			} else {
 				require.NoError(t, err)
 				require.Empty(t, hits)
@@ -55,36 +61,4 @@ func TestSearchSharedBoundsHubResponse(t *testing.T) {
 			require.True(t, body.closed)
 		})
 	}
-}
-
-func TestSearchSharedRejectsDeclaredOversizeAndMalformedResponse(t *testing.T) {
-	for _, tc := range []struct {
-		name   string
-		body   string
-		length int64
-	}{
-		{name: "declared size", body: "{}", length: 14 << 20},
-		{name: "malformed", body: "{"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			reader := strings.NewReader(tc.body)
-			body := &bridgeTrackedResponseBody{Reader: reader}
-			client := claimHubClient{baseURL: "https://hub.example", client: &http.Client{Transport: searchResponseTransport{body: body, length: tc.length}}}
-			_, _, err := client.SearchShared(t.Context(), 1, hybridParams{Query: "test"}, 20)
-			require.Error(t, err)
-			require.True(t, body.closed)
-			if tc.length > 0 {
-				require.Equal(t, len(tc.body), reader.Len())
-			}
-		})
-	}
-}
-
-type searchResponseTransport struct {
-	body   *bridgeTrackedResponseBody
-	length int64
-}
-
-func (t searchResponseTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: t.body, ContentLength: t.length, Request: req}, nil
 }
