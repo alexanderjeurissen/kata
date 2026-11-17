@@ -63,6 +63,8 @@ func RunRelayLinkBoundaryKeepsSameProjectEffects(t *testing.T, store db.Storage)
 	t.Run("relay composite creation", func(t *testing.T) {
 		ctx := t.Context()
 		fixture := newRelayLinkBoundaryFixture(t, store, "relay-composite")
+		_, err := store.UpsertFederationBinding(ctx, db.FederationBinding{ProjectID: fixture.sibling.ID, Role: db.FederationRoleHub, HubProjectID: fixture.sibling.ID, HubProjectUID: fixture.sibling.UID, Enabled: true})
+		require.NoError(t, err)
 		peerInstanceUID, err := uid.New()
 		require.NoError(t, err)
 		//nolint:gosec // This is a deterministic fixture credential, never an operational secret.
