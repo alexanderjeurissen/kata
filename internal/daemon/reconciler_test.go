@@ -386,6 +386,22 @@ func TestReconcileDirectSpokeEmbedsOnlyPrivateProjects(t *testing.T) {
 	require.Contains(t, encoded[0][0], "private search target")
 }
 
+func TestReconcilePausedDirectSpokeEmbedsLocally(t *testing.T) {
+	ctx := t.Context()
+	store := newReconcilerTestStore(t)
+	project, err := store.CreateProject(ctx, "shared-project")
+	require.NoError(t, err)
+	_, _, err = store.CreateIssue(ctx, db.CreateIssueParams{ProjectID: project.ID, Title: "paused project issue", Author: "member"})
+	require.NoError(t, err)
+	_, err = store.UpsertFederationBinding(ctx, db.FederationBinding{ProjectID: project.ID, Role: db.FederationRoleSpoke, HubURL: "https://hub.example", HubProjectID: 1, HubProjectUID: project.UID, Enabled: false})
+	require.NoError(t, err)
+	emb := newReconcilerArtifactEmbedder(t, "example-model")
+	r := NewReconciler(store, openTestVectorIndex(t), emb, ReconcilerConfig{BatchSize: 64})
+	require.NoError(t, r.reconcileOnce(ctx))
+	require.Len(t, emb.inputs(), 1)
+	require.Contains(t, emb.inputs()[0][0], "paused project issue")
+}
+
 type reconcilerArtifactEmbedder struct {
 	client *embedding.Client
 	mu     sync.Mutex

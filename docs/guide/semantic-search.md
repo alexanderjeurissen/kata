@@ -266,6 +266,10 @@ the hub is unreachable, automatic search falls back to local word matches;
 explicit semantic or hybrid search reports the failure. Relay spokes retain
 their existing embedding behavior.
 
+Upgrade the hub to a version with the federation search route before upgrading
+direct spokes. With an older hub, automatic search returns local word matches
+with a degradation reason; explicit semantic and hybrid searches return 503.
+
 SQLite keeps vectors in a sidecar database; PostgreSQL keeps them in pgvector
 tables in its selected Kata schema when that optional extension is installed.
 They are not included in JSONL

@@ -37,9 +37,9 @@ func (r *Reconciler) projectGenerationAllowed(ctx context.Context, projectUID st
 		return false, nil
 	}
 	if binding.Role == db.FederationRoleSpoke {
-		// Direct spokes use the hub's search index for shared projects.
+		// Active direct spokes use the hub's search index for shared projects.
 		if binding.RelayConfig == nil {
-			return false, nil
+			return !binding.Enabled, nil
 		}
 		if r.cfg.FederationProducerAllowed == nil {
 			return false, nil
