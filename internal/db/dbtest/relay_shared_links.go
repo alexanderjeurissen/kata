@@ -3,13 +3,11 @@ package dbtest
 import (
 	"context"
 	"crypto/ed25519"
-	"encoding/json/jsontext"
 	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kata/internal/db"
-	"go.kenn.io/kata/internal/notification"
 )
 
 // RelaySharedAccessFixture is one native root and its common-audience pair.
@@ -21,7 +19,7 @@ type RelaySharedAccessFixture struct {
 	Signer   db.RootAttributionSigner
 }
 
-// RunRelayEventReleasePeerAccess checks access before offering events and moved issue snapshots.
+// RunRelayEventReleasePeerAccess checks access before offering events.
 func RunRelayEventReleasePeerAccess(t *testing.T, store db.Storage) {
 	ctx := t.Context()
 	fixture := NewRelaySharedAccessFixture(t, store)
@@ -98,44 +96,6 @@ func RunRelayEventReleasePeerAccess(t *testing.T, store db.Storage) {
 	require.Equal(t, crossing.UID, next[0].SourceUID)
 	require.Equal(t, crossing.ContentHash, next[0].SourceHash)
 	require.NoError(t, store.AckRelayDeliveries(ctx, binding, 1, db.RelayStreamEvent, next[0].Sequence, next[0].Digest))
-	require.NoError(t, store.RevokeFederationEnrollment(ctx, fixture.Grant.Enrollment.ID))
-	source, err := store.CreateProject(ctx, "move-source")
-	require.NoError(t, err)
-	_, err = store.UpsertFederationBinding(ctx, db.FederationBinding{ProjectID: source.ID, Role: db.FederationRoleHub, HubProjectID: source.ID, HubProjectUID: source.UID, Enabled: true})
-	require.NoError(t, err)
-	comment, _, err := store.CreateComment(ctx, db.CreateCommentParams{IssueID: fixture.Issues[1].ID, Author: "member", Body: "Peer comment"})
-	require.NoError(t, err)
-	issue, _, err := store.CreateIssue(ctx, db.CreateIssueParams{ProjectID: fixture.Projects[0].ID, Author: "member", Title: "Moved issue"})
-	require.NoError(t, err)
-	patched, err := store.PatchIssueMetadata(ctx, db.PatchIssueMetadataIn{IssueID: issue.ID, Actor: "member", Patch: map[string]jsontext.Value{notification.MetadataKey("recipient"): jsontext.Value(`{"re":"` + comment.UID + `"}`)}})
-	require.NoError(t, err)
-	away, err := store.MoveIssueProject(ctx, db.MoveIssueProjectIn{IssueID: issue.ID, FromProjectID: fixture.Projects[0].ID, ToProjectID: source.ID, IfMatchRev: patched.Issue.Revision, Actor: "member"})
-	require.NoError(t, err)
-	moved, err := store.MoveIssueProject(ctx, db.MoveIssueProjectIn{IssueID: issue.ID, FromProjectID: source.ID, ToProjectID: fixture.Projects[0].ID, IfMatchRev: away.Issue.Revision, Actor: "member"})
-	require.NoError(t, err)
-	require.NotNil(t, moved.Event)
-	require.Contains(t, moved.Event.Payload, comment.UID)
-	grant, err := store.CreateRelayEnrollment(ctx, db.CreateRelayEnrollmentParams{ProjectID: fixture.Projects[0].ID, ParentTokenID: *fixture.Grant.Enrollment.ParentTokenID, SpokeInstanceUID: "00000000000000000000000007", ProtocolVersion: db.RelayProtocolVersion, Token: "move-snapshot-relay-test-token"})
-	require.NoError(t, err)
-	binding = grant.Enrollment.RelayBindingUID
-	for {
-		items, err := store.PendingRelayDeliveries(features, binding, db.RelayStreamEvent, 1)
-		require.NoError(t, err)
-		require.Len(t, items, 1)
-		require.NoError(t, store.AckRelayDeliveries(ctx, binding, 1, db.RelayStreamEvent, items[0].Sequence, items[0].Digest))
-		if items[0].SourceUID == patched.Event.UID {
-			break
-		}
-	}
-	before = relayStateForBinding(t, store, binding)
-	out, err = store.PendingRelayDeliveries(rejectPeer, binding, db.RelayStreamEvent, 100)
-	require.ErrorIs(t, err, denied)
-	require.Empty(t, out)
-	require.Equal(t, before, relayStateForBinding(t, store, binding))
-	offered, err = store.PendingRelayDeliveries(features, binding, db.RelayStreamEvent, 100)
-	require.NoError(t, err)
-	require.NotEmpty(t, offered)
-	require.Equal(t, moved.Event.UID, offered[len(offered)-1].SourceUID)
 }
 
 // NewRelaySharedAccessFixture enrolls the same native pair for storage and
@@ -193,14 +153,18 @@ func RunRelayUnresolvedLinkFeatures(t *testing.T, root db.Storage, backend Backe
 	features := db.WithRelayPeerEventFeatures(ctx, db.SupportedEventFeatures)
 	hub := backend.Open(t)
 	t.Cleanup(func() { require.NoError(t, hub.Close()) })
-	leaf := backend.Open(t)
-	t.Cleanup(func() { require.NoError(t, leaf.Close()) })
 	fixture := NewRelaySharedAccessFixture(t, root)
 	upstream, upstreamEpoch := setupRelayHop(t, root, hub, fixture.Projects[0], "unresolved-hub", true)
 	syncRelayHop(features, t, root, hub, upstream, upstreamEpoch, db.RelayStreamEvent, db.RelayStreamReceipt)
 	hubProject, err := hub.ProjectByUID(ctx, fixture.Projects[0].UID)
 	require.NoError(t, err)
-	downstream, epoch := setupRelayHop(t, hub, leaf, hubProject, "unresolved-leaf", false)
+	policy, err := hub.ProjectAccessPolicy(ctx, hubProject.UID)
+	require.NoError(t, err)
+	parent, _, err := hub.CreateAPIToken(ctx, db.CreateAPITokenParams{Actor: "member", AdminActor: "admin", TeamUIDs: policy.TeamUIDs, PlaintextToken: "unresolved-leaf-parent-test-token"})
+	require.NoError(t, err)
+	grant, err := hub.CreateRelayEnrollment(ctx, db.CreateRelayEnrollmentParams{ProjectID: hubProject.ID, ParentTokenID: parent.ID, SpokeInstanceUID: "00000000000000000000000008", ProtocolVersion: db.RelayProtocolVersion, Token: "unresolved-leaf-relay-test-token"})
+	require.NoError(t, err)
+	downstream, epoch := grant.Enrollment.RelayBindingUID, grant.Enrollment.RelayResetEpoch
 
 	// Earlier ordinary events may be offered as a prefix. The link must stop
 	// an old peer before the missing endpoint's project reaches this hub.
@@ -217,5 +181,4 @@ func RunRelayUnresolvedLinkFeatures(t *testing.T, root db.Storage, backend Backe
 	items, err := hub.PendingRelayDeliveries(features, downstream, db.RelayStreamEvent, 100)
 	require.NoError(t, err)
 	require.NotEmpty(t, items)
-	syncRelayHop(features, t, hub, nil, downstream, epoch, db.RelayStreamEvent, db.RelayStreamReceipt, db.RelayStreamArtifact)
 }

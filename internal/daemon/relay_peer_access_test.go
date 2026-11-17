@@ -30,7 +30,7 @@ type relayPeerHost struct {
 func (h *relayPeerHost) AuthorizeFederation(_ context.Context, request daemon.HostFederationAccessRequest) (daemon.HostFederationAccessDecision, error) {
 	h.requests = append(h.requests, request)
 	if request.Project.UID == h.peer {
-		if h.mode == "transient" {
+		if h.mode == "retry-cleanup-failed" {
 			h.attempts++
 			if h.attempts == 1 {
 				return daemon.HostFederationAccessDecision{TransactionFence: func(context.Context, db.Transaction) error {
@@ -107,7 +107,7 @@ func TestRelayPeerAccessHTTP(t *testing.T) {
 		require.NoError(t, err)
 		for _, path := range []string{"?stream=events", "/reset"} {
 			if _, postgres := store.(*pgstore.Store); postgres {
-				host.mode = "transient"
+				host.mode = "retry-cleanup-failed"
 				host.attempts = 0
 				before := host.cleaned
 				status, raw := request(path)
@@ -120,9 +120,15 @@ func TestRelayPeerAccessHTTP(t *testing.T) {
 				status int
 			}{{"denied", 404}, {"unavailable", 503}, {"fence-denied", 404}, {"cleanup-failed", 503}} {
 				host.mode = tc.mode
+				before := host.cleaned
 				host.requests = nil
 				status, raw := request(path)
 				require.Equalf(t, tc.status, status, "%s: %s", tc.mode, raw)
+				if tc.mode == "fence-denied" || tc.mode == "cleanup-failed" {
+					require.Equal(t, before+1, host.cleaned)
+				} else {
+					require.Equal(t, before, host.cleaned)
+				}
 				require.GreaterOrEqual(t, len(host.requests), 2)
 				peer := host.requests[len(host.requests)-1]
 				require.Equal(t, fixture.Grant.Enrollment.ID, peer.Enrollment.ID)
@@ -144,11 +150,6 @@ func TestRelayPeerAccessHTTP(t *testing.T) {
 			status, raw = request(path)
 			require.Equal(t, 200, status, string(raw))
 		}
-		expectedCleaned := 4
-		if _, postgres := store.(*pgstore.Store); postgres {
-			expectedCleaned = 6
-		}
-		require.Equal(t, expectedCleaned, host.cleaned)
 
 		_, _, err = store.CreateLinkAndEvent(t.Context(), db.CreateLinkParams{
 			FromIssueID: fixture.Issues[0].ID, ToIssueID: fixture.Issues[1].ID,

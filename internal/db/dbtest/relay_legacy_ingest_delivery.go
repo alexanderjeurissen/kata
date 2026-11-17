@@ -15,9 +15,7 @@ import (
 // RunRelayCrossProjectRemoval checks that relay ingest accepts a crossing parent removal.
 func RunRelayCrossProjectRemoval(t *testing.T, store db.Storage) {
 	ctx := t.Context()
-	fixture := newRelayLinkBoundaryFixture(t, store, "relay-cross-removal")
-	_, err := store.UpsertFederationBinding(ctx, db.FederationBinding{ProjectID: fixture.sibling.ID, Role: db.FederationRoleHub, HubProjectID: fixture.sibling.ID, HubProjectUID: fixture.sibling.UID, Enabled: true})
-	require.NoError(t, err)
+	fixture := newRelayLinkBoundaryFixture(t, store, "relay-cross-removal", true)
 	public := fixture.signer.PrivateKey.Public().(ed25519.PublicKey)
 	require.NoError(t, store.PinRootAuthority(ctx, db.RootKeyPin{ProjectUID: fixture.sibling.UID, AuthorityUID: store.InstanceUID(), KeyID: db.RootPublicKeyID(public), PublicKey: public}))
 	child, _, err := store.CreateIssue(ctx, db.CreateIssueParams{ProjectID: fixture.project.ID, Title: "Child", Author: "member"})
@@ -123,10 +121,8 @@ func RunLegacyRelayAdmission(t *testing.T, store db.Storage) {
 		for _, mode := range modes {
 			t.Run(kind+"/"+mode, func(t *testing.T) {
 				ctx := t.Context()
-				fixture := newRelayLinkBoundaryFixture(t, store, "legacy-"+kind+"-"+mode)
+				fixture := newRelayLinkBoundaryFixture(t, store, "legacy-"+kind+"-"+mode, mode == "relayed peer")
 				if mode == "relayed peer" {
-					_, err := store.UpsertFederationBinding(ctx, db.FederationBinding{ProjectID: fixture.sibling.ID, Role: db.FederationRoleHub, HubProjectID: fixture.sibling.ID, HubProjectUID: fixture.sibling.UID, Enabled: true})
-					require.NoError(t, err)
 					fixture.project, fixture.sibling = fixture.sibling, fixture.project
 				}
 				peerProject := fixture.sibling
@@ -211,7 +207,7 @@ func RunLegacyRelayAdmission(t *testing.T, store db.Storage) {
 					push.Events = []db.FederationIngestEvent{{SourceEventID: 1, Event: valid}, {SourceEventID: 2, Event: event}}
 				}
 				authorizedProjects := []string{fixture.project.UID}
-				if mode == "revoked" || mode == "retained" || kind == "parent replacement" || kind == "unlink" || kind == "composite cleanup" {
+				if mode == "revoked" || mode == "retained" || kind == "unlink" || kind == "composite cleanup" || kind == "parent replacement" {
 					// Accepted cross-project writes still need authority over both endpoints.
 					authorizedProjects = append(authorizedProjects, peerProject.UID)
 				}
@@ -220,7 +216,7 @@ func RunLegacyRelayAdmission(t *testing.T, store db.Storage) {
 					require.ErrorIs(t, err, db.ErrFederationIngestValidation)
 					return
 				}
-				refuse := (mode == "sibling" || mode == "relayed peer") && kind != "parent replacement" && kind != "unlink" && kind != "composite cleanup"
+				refuse := (mode == "sibling" || mode == "relayed peer") && kind != "unlink" && kind != "composite cleanup" && kind != "parent replacement"
 				if refuse {
 					require.ErrorIs(t, err, db.ErrFederationIngestValidation)
 					require.ErrorIs(t, err, db.ErrFederationCrossProjectBoundary)

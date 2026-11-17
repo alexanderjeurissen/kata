@@ -51,6 +51,7 @@ func TestRelayEventPeerProjects(t *testing.T) {
 		{"snapshot null links before reply", "issue.snapshot", `{"links":null,"comments":[{"reply_to_uid":"` + commentUID + `","reply_kind":"reply"}]}`, nil, nil, map[string]bool{"peer": false}},
 		{"close legacy parent before evidence", "issue.closed", `{"parent_short_id":"old1","evidence":[{"type":"duplicate-of","issue_ref":"` + issueUID + `"}]}`, nil, nil, map[string]bool{"peer": false}},
 		{"metadata notification", "issue.created", `{"metadata":{"` + notification.MetadataKey("recipient") + `":{"re":"` + commentUID + `"}}}`, nil, nil, map[string]bool{"peer": false}},
+		{"moved snapshot notification", "issue.moved", `{"snapshot":{"metadata":{"` + notification.MetadataKey("recipient") + `":{"re":"` + commentUID + `"}}}}`, nil, nil, map[string]bool{"peer": false}},
 		{"diff notification", "issue.metadata_updated", `{"diff":{"` + notification.MetadataKey("recipient") + `":{"from":{},"to":{"re":"` + commentUID + `"}}}}`, nil, nil, map[string]bool{"peer": false}},
 		{"link added", "issue.linked", `{"from_uid":"` + ownIssueUID + `","to_uid":"` + otherIssueUID + `"}`, nil, &ownIssue, map[string]bool{"own": true, "other": true}},
 		{"link removed", "issue.unlinked", `{"from_uid":"` + ownIssueUID + `","to_uid":"` + otherIssueUID + `"}`, nil, &ownIssue, map[string]bool{"own": true, "other": true}},

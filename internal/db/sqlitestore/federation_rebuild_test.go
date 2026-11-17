@@ -363,12 +363,7 @@ func TestMoveRebuildMatchesLockedRebuild(t *testing.T) {
 		require.NoError(t, err)
 		_, err = d.InsertRemoteEvents(ctx, middle.ID, []db.RemoteEvent{link, movedPeer})
 		require.NoError(t, err)
-		public, _, err := ed25519.GenerateKey(nil)
-		require.NoError(t, err)
-		keyID := db.RootPublicKeyID(public)
-		require.NoError(t, d.PinRootAuthority(ctx, db.RootKeyPin{ProjectUID: middle.UID, AuthorityUID: "01HZNQ7VFPK1XGD8R5MABC0003", KeyID: keyID, PublicKey: public}))
-		_, err = d.ExecContext(ctx, `INSERT INTO federation_event_provenance(project_uid,event_uid,content_hash,reset_epoch,sequence,key_id,receipt) VALUES(?,?,?,?,?,?,?)`, middle.UID, link.EventUID, link.ContentHash, 1, 1, keyID, `{"ingress_instance_uid":"remote"}`)
-		require.NoError(t, err)
+		pinEventProvenance(t, d, middle, link)
 		locked := cloneIncrementalStore(t, d)
 		attempts := 0
 		d.federationIngestPrepared = func() { attempts++ }
@@ -398,12 +393,7 @@ func TestMoveRebuildMatchesLockedRebuild(t *testing.T) {
 		require.NoError(t, err)
 		_, err = d.InsertRemoteEvents(ctx, source.ID, []db.RemoteEvent{link})
 		require.NoError(t, err)
-		public, _, err := ed25519.GenerateKey(nil)
-		require.NoError(t, err)
-		keyID := db.RootPublicKeyID(public)
-		require.NoError(t, d.PinRootAuthority(ctx, db.RootKeyPin{ProjectUID: source.UID, AuthorityUID: "01HZNQ7VFPK1XGD8R5MABC0003", KeyID: keyID, PublicKey: public}))
-		_, err = d.ExecContext(ctx, `INSERT INTO federation_event_provenance(project_uid,event_uid,content_hash,reset_epoch,sequence,key_id,receipt) VALUES(?,?,?,?,?,?,?)`, source.UID, link.EventUID, link.ContentHash, 1, 1, keyID, `{"ingress_instance_uid":"remote"}`)
-		require.NoError(t, err)
+		pinEventProvenance(t, d, source, link)
 		locked := cloneIncrementalStore(t, d)
 		attempts := 0
 		d.federationIngestPrepared = func() { attempts++ }
@@ -567,4 +557,15 @@ func TestMoveRebuildPreservesLinks(t *testing.T) {
 			}
 		})
 	}
+}
+
+func pinEventProvenance(t *testing.T, d *Store, project db.Project, event db.RemoteEvent) {
+	t.Helper()
+	ctx := t.Context()
+	public, _, err := ed25519.GenerateKey(nil)
+	require.NoError(t, err)
+	keyID := db.RootPublicKeyID(public)
+	require.NoError(t, d.PinRootAuthority(ctx, db.RootKeyPin{ProjectUID: project.UID, AuthorityUID: "01HZNQ7VFPK1XGD8R5MABC0003", KeyID: keyID, PublicKey: public}))
+	_, err = d.ExecContext(ctx, `INSERT INTO federation_event_provenance(project_uid,event_uid,content_hash,reset_epoch,sequence,key_id,receipt) VALUES(?,?,?,?,?,?,?)`, project.UID, event.EventUID, event.ContentHash, 1, 1, keyID, `{"ingress_instance_uid":"remote"}`)
+	require.NoError(t, err)
 }
