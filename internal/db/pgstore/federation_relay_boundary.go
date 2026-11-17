@@ -191,7 +191,7 @@ func rejectRelayProjectLinksTx(ctx context.Context, tx *sql.Tx, projectID int64)
 		return err
 	}
 	for _, peer := range peers {
-		shared, err := relaySharedProjectsTx(ctx, tx, projectID, peer, false)
+		shared, err := relayPeerRetainedTx(ctx, tx, projectID, peer)
 		if err != nil {
 			return err
 		}
@@ -200,6 +200,22 @@ func rejectRelayProjectLinksTx(ctx context.Context, tx *sql.Tx, projectID int64)
 		}
 	}
 	return nil
+}
+
+// relayPeerRetainedTx keeps a link to a live peer that shares the project's
+// relay audience. A live relay connection also keeps a link to an archived
+// peer, as link admission does, so the connection can recover while the peer
+// is archived. A new enrollment has no such connection and still needs a
+// live peer in the same audience.
+func relayPeerRetainedTx(ctx context.Context, tx *sql.Tx, projectID, peerID int64) (bool, error) {
+	var archived bool
+	if err := tx.QueryRowContext(ctx, `SELECT deleted_at IS NOT NULL FROM projects WHERE id=$1`, peerID).Scan(&archived); err != nil {
+		return false, err
+	}
+	if archived {
+		return relayProjectsActiveTx(ctx, tx, projectID, projectID)
+	}
+	return relaySharedProjectsTx(ctx, tx, projectID, peerID, false)
 }
 
 // Original cross-project event bytes remain on the owner store. Initial relay

@@ -242,16 +242,13 @@ func filterRelayCrossProjectLinkEvents(
 }
 
 // relayFoldPeerAllowed applies the admission rule of
-// relayCrossProjectEndpointAllowed to a root-authored link at fold time: an
-// archived peer project keeps its link row, which readers hide until the
-// project is restored, and a live peer must share the source's relay audience.
+// relayCrossProjectEndpointAllowed to a root-authored link at fold time: a link
+// with an archived endpoint project keeps its row, which readers hide until the
+// project is restored, and two live projects must share the relay audience.
 func relayFoldPeerAllowed(ctx context.Context, tx *sql.Tx, sourceUID, peerUID string) (bool, error) {
 	var sourceID, peerID int64
 	var archived bool
-	err := tx.QueryRowContext(ctx, `SELECT id FROM projects WHERE uid=$1 AND deleted_at IS NULL`, sourceUID).Scan(&sourceID)
-	if err == nil {
-		err = tx.QueryRowContext(ctx, `SELECT id, deleted_at IS NOT NULL FROM projects WHERE uid=$1`, peerUID).Scan(&peerID, &archived)
-	}
+	err := tx.QueryRowContext(ctx, `SELECT s.id, p.id, s.deleted_at IS NOT NULL OR p.deleted_at IS NOT NULL FROM projects s, projects p WHERE s.uid=$1 AND p.uid=$2`, sourceUID, peerUID).Scan(&sourceID, &peerID, &archived)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
