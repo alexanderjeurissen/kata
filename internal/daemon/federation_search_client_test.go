@@ -14,8 +14,8 @@ func TestSearchSharedBoundsHubResponse(t *testing.T) {
 		padding   int
 		wantError bool
 	}{
-		{name: "large response", padding: 2 << 20},
-		{name: "oversized response", padding: 14 << 20, wantError: true},
+		{name: "large response", padding: 1 << 20},
+		{name: "oversized response", padding: 2 << 20, wantError: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			payload := `{"results":[],"padding":"` + strings.Repeat("x", tc.padding) + `"}`
@@ -27,7 +27,7 @@ func TestSearchSharedBoundsHubResponse(t *testing.T) {
 			hits, err := client.SearchShared(t.Context(), 1, hybridParams{Query: "test"}, 20)
 			if tc.wantError {
 				require.ErrorContains(t, err, "hub search response exceeds")
-				require.LessOrEqual(t, len(payload)-reader.Len(), fetchCap*(compactRowMaxBytes+hitEnvelopeBytes)+responseEnvelopeBytes+1)
+				require.LessOrEqual(t, len(payload)-reader.Len(), 20*(compactRowMaxBytes+hitEnvelopeBytes)+responseEnvelopeBytes+1)
 			} else {
 				require.NoError(t, err)
 				require.Empty(t, hits)

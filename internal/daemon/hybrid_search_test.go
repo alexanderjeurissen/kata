@@ -1391,16 +1391,16 @@ func TestHydrateRemoteHitsUsesHubSnapshot(t *testing.T) {
 	hubIssue.Title = "current hub title"
 	hubIssue.DeletedAt = nil
 	hits := []api.FederationSearchHit{
-		{Issue: api.IssueOut{Issue: hubIssue, WebURL: "https://hub.example/issue"}, Score: 0.9},
-		{Issue: api.IssueOut{Issue: foreign, Oversized: true}, Score: 0.8},
+		{Issue: hubIssue, WebURL: "https://hub.example/issue", Score: 0.9},
+		{Issue: foreign, Oversized: true, Score: 0.8},
 	}
 	candidates, err := hydrateRemoteHits(ctx, store, hits, hybridParams{ProjectID: project.ID}, 10)
 	require.NoError(t, err)
 	require.Len(t, candidates, 2)
-	require.Equal(t, local.ID, candidates[0].Issue.ID)
+	require.Zero(t, candidates[0].Issue.ID)
 	require.Equal(t, "current hub title", candidates[0].Issue.Title)
 	require.Nil(t, candidates[0].Issue.DeletedAt)
-	require.False(t, candidates[0].Remote)
+	require.True(t, candidates[0].Remote)
 	require.Zero(t, candidates[1].Issue.ID)
 	require.True(t, candidates[1].Remote)
 	require.True(t, candidates[1].Oversized)

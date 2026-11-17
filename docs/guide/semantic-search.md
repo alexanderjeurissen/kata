@@ -266,8 +266,9 @@ the hub is unreachable, automatic search falls back to local word matches;
 explicit semantic or hybrid search reports the failure. Relay spokes retain
 their existing embedding behavior.
 
-Shared-project semantic results show compact hub rows. Results the spoke has not
-pulled are marked `remote` and use `project#<lowercase ULID>` as their reference.
+Shared-project semantic results show the hub's current content and status, even
+when a local copy is stale. Results the spoke has not pulled, or has deleted
+locally, are marked `remote` and use `project#<lowercase ULID>` as their reference.
 The hub link opens the issue before the pull; `show` and `comment` resolve its
 reference after the pull. Oversized rows retain their identity, status, and link.
 Earlier shared-project vectors are removed from the spoke's index.

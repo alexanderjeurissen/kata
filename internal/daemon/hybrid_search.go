@@ -304,18 +304,22 @@ func hydrateRemoteHits(ctx context.Context, store db.Storage, hits []api.Federat
 	if err != nil {
 		return nil, err
 	}
-	var candidates []db.SearchCandidate
+	uids := make([]string, 0, len(hits))
 	for _, hit := range hits {
 		if !uid.Valid(hit.Issue.UID) {
 			return nil, fmt.Errorf("invalid hub issue UID %q", hit.Issue.UID)
 		}
-		local, err := store.IssueByUID(ctx, hit.Issue.UID, db.IncludeDeletedYes)
-		remote := errors.Is(err, db.ErrNotFound)
-		if err != nil && !remote {
-			return nil, err
-		}
-		remote = remote || local.ProjectID != p.ProjectID
-		issue := hit.Issue.Issue
+		uids = append(uids, hit.Issue.UID)
+	}
+	locals, err := store.IssuesByUIDs(ctx, uids, db.IncludeDeletedNo)
+	if err != nil {
+		return nil, err
+	}
+	var candidates []db.SearchCandidate
+	for _, hit := range hits {
+		local, found := locals[hit.Issue.UID]
+		remote := !found || local.ProjectID != p.ProjectID
+		issue := hit.Issue
 		issue.ProjectID, issue.ProjectUID = p.ProjectID, project.UID
 		if remote {
 			issue.ID = 0
@@ -323,7 +327,7 @@ func hydrateRemoteHits(ctx context.Context, store db.Storage, hits []api.Federat
 		} else {
 			issue.ID, issue.ShortID, issue.RecurrenceID = local.ID, local.ShortID, local.RecurrenceID
 		}
-		candidates = append(candidates, db.SearchCandidate{Issue: issue, Score: hit.Score, MatchedIn: []string{"semantic"}, Remote: remote, Hub: true, WebURL: hit.Issue.WebURL, Oversized: hit.Issue.Oversized})
+		candidates = append(candidates, db.SearchCandidate{Issue: issue, Score: hit.Score, MatchedIn: []string{"semantic"}, Remote: remote, Hub: true, WebURL: hit.WebURL, Oversized: hit.Oversized})
 	}
 	return truncate(candidates, fetch), nil
 }

@@ -86,6 +86,19 @@ func TestDirectSpokeSearchUsesHubResults(t *testing.T) {
 	filteredResp, filtered := envDoRaw(t, hub, http.MethodGet, filteredPath, nil, map[string]string{"Authorization": "Bearer " + grant.Token})
 	require.Equal(t, http.StatusOK, filteredResp.StatusCode, string(filtered))
 	require.Contains(t, string(filtered), `"results":[]`)
+	hubResp, hubRaw := envDoRaw(t, hub, http.MethodGet, fmt.Sprintf("/api/v1/projects/%d/federation/search?q=concept", project.ID), nil, map[string]string{"Authorization": "Bearer " + grant.Token})
+	require.Equal(t, http.StatusOK, hubResp.StatusCode, string(hubRaw))
+	var hubShape struct {
+		Results []map[string]jsontext.Value `json:"results"`
+	}
+	require.NoError(t, json.Unmarshal(hubRaw, &hubShape))
+	require.Len(t, hubShape.Results, 1)
+	require.Contains(t, hubShape.Results[0], "issue")
+	require.Contains(t, hubShape.Results[0], "score")
+	require.Contains(t, hubShape.Results[0], "web_url")
+	require.NotContains(t, hubShape.Results[0], "labels")
+	require.NotContains(t, hubShape.Results[0], "relationships")
+	require.NotContains(t, hubShape.Results[0], "children")
 	resp, raw := envGetRaw(t, spoke, fmt.Sprintf("/api/v1/projects/%d/search?q=concept&mode=semantic", replica.ID))
 	require.Equal(t, http.StatusOK, resp.StatusCode, string(raw))
 	var body struct {
@@ -136,12 +149,12 @@ func TestDirectSpokeSearchUsesHubResults(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(output), "claim target")
 	require.Contains(t, string(output), "claim local only")
-	first, _, err := hub.DB.CreateIssue(ctx, db.CreateIssueParams{ProjectID: project.ID, UID: "01HZNQ7VFPK1XGD8R5MABXD4EX", Title: "recent hub one", Author: "tester"})
+	first, _, err := hub.DB.CreateIssue(ctx, db.CreateIssueParams{ProjectID: project.ID, UID: "01HZNQ7VFPK1XGD8R5MABXD4EX", Title: "recent hub one", Body: "remote hub body", Author: "tester"})
 	require.NoError(t, err)
 	second, _, err := hub.DB.CreateIssue(ctx, db.CreateIssueParams{ProjectID: project.ID, Title: "recent hub two", Author: "tester"})
 	require.NoError(t, err)
-	title := "hub updated title"
-	_, _, _, err = hub.DB.EditIssue(ctx, db.EditIssueParams{IssueID: issue.ID, Title: &title, Actor: "tester"})
+	title, updatedBody := "hub updated title", "current hub body"
+	_, _, _, err = hub.DB.EditIssue(ctx, db.EditIssueParams{IssueID: issue.ID, Title: &title, Body: &updatedBody, Actor: "tester"})
 	require.NoError(t, err)
 	_, err = hub.DB.AddLabel(ctx, issue.ID, "hub-label", "tester")
 	require.NoError(t, err)
@@ -173,11 +186,13 @@ func TestDirectSpokeSearchUsesHubResults(t *testing.T) {
 		require.Equal(t, replica.ID, hit.Issue.ProjectID)
 		require.Equal(t, remote.ShortID, hit.Issue.ShortID)
 		require.Equal(t, remote.Title, hit.Issue.Title)
+		require.Equal(t, remote.Body, hit.Issue.Body)
 		require.Equal(t, "https://tasks.example/kata?issue="+remote.UID+"#direct=1", hit.WebURL)
 	}
 	known := body.Results[byUID[issue.UID]]
 	require.False(t, known.Remote)
 	require.Equal(t, local.ID, known.Issue.ID)
+	require.Equal(t, updatedBody, known.Issue.Body)
 	require.Equal(t, local.ShortID, known.Issue.ShortID)
 	require.Equal(t, "hub updated title", known.Issue.Title)
 	resp, raw = envGetRaw(t, spoke, fmt.Sprintf("/api/v1/projects/%d/search?q=concept&mode=semantic&label=hub-label", replica.ID))
@@ -193,10 +208,23 @@ func TestDirectSpokeSearchUsesHubResults(t *testing.T) {
 	for _, hit := range body.Results {
 		if hit.Issue.UID == issue.UID {
 			require.Equal(t, title, hit.Issue.Title)
+			require.Equal(t, updatedBody, hit.Issue.Body)
 			found = true
 		}
 	}
 	require.True(t, found)
+	_, _, _, err = hub.DB.CloseIssue(ctx, issue.ID, "done", "tester", "", nil)
+	require.NoError(t, err)
+	resp, raw = envGetRaw(t, spoke, fmt.Sprintf("/api/v1/projects/%d/search?q=concept&mode=semantic&status=closed&label=hub-label", replica.ID))
+	require.Equal(t, http.StatusOK, resp.StatusCode, string(raw))
+	require.NoError(t, json.Unmarshal(raw, &body))
+	require.Len(t, body.Results, 1)
+	require.Equal(t, "closed", body.Results[0].Issue.Status)
+	require.Equal(t, local.ID, body.Results[0].Issue.ID)
+	resp, raw = envGetRaw(t, spoke, fmt.Sprintf("/api/v1/projects/%d/search?q=concept&mode=semantic&status=open&label=hub-label", replica.ID))
+	require.Equal(t, http.StatusOK, resp.StatusCode, string(raw))
+	require.NoError(t, json.Unmarshal(raw, &body))
+	require.Empty(t, body.Results)
 	result, err = session.CallTool(ctx, &sdkmcp.CallToolParams{Name: "kata.search", Arguments: map[string]any{"query": "concept"}})
 	require.NoError(t, err)
 	require.False(t, result.IsError)
@@ -275,6 +303,8 @@ func TestDirectSpokeSearchUsesHubResults(t *testing.T) {
 	require.NoError(t, err)
 	_, _, _, err = hub.DB.EditIssue(ctx, db.EditIssueParams{IssueID: oversized.ID, Title: new(strings.Repeat("z", 65<<10)), Actor: "tester"})
 	require.NoError(t, err)
+	_, _, _, err = hub.DB.EditIssue(ctx, db.EditIssueParams{IssueID: issue.ID, Body: new(strings.Repeat("z", 65<<10)), Actor: "tester"})
+	require.NoError(t, err)
 	_, err = hub.DB.AddLabel(ctx, oversized.ID, "oversized", "tester")
 	require.NoError(t, err)
 	path := fmt.Sprintf("/api/v1/projects/%d/federation/search?q=concept&limit=200", project.ID)
@@ -283,10 +313,10 @@ func TestDirectSpokeSearchUsesHubResults(t *testing.T) {
 	var hubRows struct {
 		Results []struct {
 			Issue struct {
-				UID       string `json:"uid"`
-				WebURL    string `json:"web_url"`
-				Oversized bool   `json:"oversized"`
+				UID string `json:"uid"`
 			} `json:"issue"`
+			WebURL    string `json:"web_url"`
+			Oversized bool   `json:"oversized"`
 		} `json:"results"`
 	}
 	require.NoError(t, json.Unmarshal(raw, &hubRows))
@@ -305,11 +335,16 @@ func TestDirectSpokeSearchUsesHubResults(t *testing.T) {
 	oversizedFound := false
 	for i, row := range hubRows.Results {
 		require.Equal(t, row.Issue.UID, spokeRows.Results[i].Issue.UID)
+		if row.Issue.UID == issue.UID {
+			require.True(t, row.Oversized)
+			require.True(t, spokeRows.Results[i].Oversized)
+			require.Equal(t, local.ID, spokeRows.Results[i].Issue.ID)
+		}
 		if row.Issue.UID == oversized.UID {
 			oversizedFound = true
-			require.True(t, row.Issue.Oversized)
+			require.True(t, row.Oversized)
 			require.True(t, spokeRows.Results[i].Oversized)
-			require.Equal(t, row.Issue.WebURL, spokeRows.Results[i].WebURL)
+			require.Equal(t, row.WebURL, spokeRows.Results[i].WebURL)
 		}
 	}
 	require.True(t, oversizedFound)

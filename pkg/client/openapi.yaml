@@ -2869,10 +2869,14 @@ components:
     FederationSearchHit:
       properties:
         issue:
-          $ref: "#/components/schemas/IssueOut"
+          $ref: "#/components/schemas/Issue"
+        oversized:
+          type: boolean
         score:
           format: double
           type: number
+        web_url:
+          type: string
       required:
         - issue
         - score

@@ -2664,7 +2664,8 @@ Use a shared daemon when those trade-offs are unacceptable.
 Upgrade hubs before direct spokes. A direct spoke searches shared projects on
 its hub and removes earlier shared-project vectors from its local index. An
 older or unavailable hub leaves automatic search with word matches and a
-reason; explicit semantic or hybrid search returns 503. Unpulled results link
-to the hub and use `project#<lowercase ULID>` references, which `show` and
+reason; explicit semantic or hybrid search returns 503. Results show the hub's
+current content and status. Unpulled or locally deleted results are marked
+remote, link to the hub and use `project#<lowercase ULID>` references, which `show` and
 `comment` resolve after the pull. Oversized results retain identity, status,
 and link. Relay spokes keep their existing embedding behavior.

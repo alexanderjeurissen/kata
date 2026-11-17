@@ -19,8 +19,10 @@ type FederationSearchRequest struct {
 }
 
 type FederationSearchHit struct {
-	Issue IssueOut `json:"issue"`
-	Score float64  `json:"score"`
+	Issue     db.Issue `json:"issue"`
+	Score     float64  `json:"score"`
+	WebURL    string   `json:"web_url,omitempty"`
+	Oversized bool     `json:"oversized,omitempty"`
 }
 
 type FederationSearchResponse struct {

@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"net/http"
@@ -149,22 +150,27 @@ func registerFederationHandlers(humaAPI huma.API, cfg ServerConfig) {
 			}
 			return nil, internalAPIError(err)
 		}
-		issues := make([]db.Issue, len(res.Hits))
-		for i, hit := range res.Hits {
-			issues[i] = hit.Issue
-		}
-		rows, err := hydrateIssueOuts(ctx, cfg.DB, cfg.DefaultTimezone, in.ProjectID, issues)
-		if err != nil {
-			return nil, internalAPIError(err)
-		}
-		addIssueWebURLs(cfg, rows)
-		if err := compactIssueOuts(rows, nil); err != nil {
-			return nil, internalAPIError(err)
-		}
 		out := &api.FederationSearchResponse{}
 		out.Body.Results = make([]api.FederationSearchHit, 0, len(res.Hits))
-		for i, hit := range res.Hits {
-			out.Body.Results = append(out.Body.Results, api.FederationSearchHit{Issue: rows[i], Score: hit.Score})
+		for _, hit := range res.Hits {
+			issue := hit.Issue
+			encoded, err := json.Marshal(issue)
+			if err != nil {
+				return nil, internalAPIError(err)
+			}
+			row := api.FederationSearchHit{Issue: issue, Score: hit.Score, WebURL: issueWebURL(cfg, issue.UID)}
+			if len(encoded) > compactRowMaxBytes {
+				row.Issue = db.Issue{ID: issue.ID, UID: issue.UID, ProjectID: issue.ProjectID, ProjectUID: issue.ProjectUID, ShortID: issue.ShortID, Status: issue.Status, Revision: issue.Revision, CreatedAt: issue.CreatedAt, UpdatedAt: issue.UpdatedAt}
+				row.Oversized = true
+			}
+			encoded, err = json.Marshal(row)
+			if err != nil {
+				return nil, internalAPIError(err)
+			}
+			if len(encoded) > compactRowMaxBytes+hitEnvelopeBytes {
+				return nil, internalAPIError(fmt.Errorf("hub search hit exceeds response limit"))
+			}
+			out.Body.Results = append(out.Body.Results, row)
 		}
 		return out, nil
 	})

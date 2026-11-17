@@ -823,14 +823,18 @@ type claimHubClient struct {
 	transportErr error
 }
 
-const hitEnvelopeBytes = 128
+const hitEnvelopeBytes = 4096
 const responseEnvelopeBytes = 1024
 
 func (c *claimHubClient) SearchShared(ctx context.Context, projectID int64, p hybridParams, limit int) ([]api.FederationSearchHit, error) {
 	if c.transportErr != nil {
 		return nil, c.transportErr
 	}
-	maxBytes := int64(fetchCap*(compactRowMaxBytes+hitEnvelopeBytes) + responseEnvelopeBytes)
+	if limit <= 0 {
+		limit = 20
+	}
+	limit = min(limit, fetchCap)
+	maxBytes := int64(limit*(compactRowMaxBytes+hitEnvelopeBytes) + responseEnvelopeBytes)
 	client, err := generated.NewDefaultClient(c.baseURL, runtime.WithHTTPClient(claimHubDoer{client: c.client, successBodyLimit: maxBytes}))
 	if err != nil {
 		return nil, err
