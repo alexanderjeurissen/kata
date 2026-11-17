@@ -388,3 +388,25 @@ func BenchmarkCLISearch(b *testing.B) {
 		clisearch.Search(root, "add a comment to an issue", 5, opts)
 	}
 }
+
+func TestSearchRemoteHitUsesUIDWhenShortIDCollides(t *testing.T) {
+	body := `{"query":"task","mode":"semantic","results":[
+		{"issue":{"uid":"01HZNQ7VFPK1XGD8R5MABXD4EX","short_id":"d4ex","title":"Hub task","status":"open"},"score":0.9,"matched_in":["semantic"],"remote":true,"web_url":"https://hub.example/issue"},
+		{"issue":{"uid":"01HZNQ7VFPK1XGD8R5MABCD4EX","short_id":"d4ex","title":"Local task","status":"open"},"score":0.8,"matched_in":["title"]}]}`
+	human := renderSearch(t, outputHuman, body)
+	lines := strings.Split(strings.TrimSpace(human), "\n")
+	require.Len(t, lines, 3)
+	require.Contains(t, lines[1], "01hznq7vfpk1xgd8r5mabxd4ex")
+	require.Contains(t, lines[1], "remote")
+	require.Contains(t, lines[1], "https://hub.example/issue")
+	require.True(t, strings.HasPrefix(lines[2], "d4ex"), lines[2])
+	require.NotContains(t, lines[2], "remote")
+	agent := renderSearch(t, outputAgent, body)
+	lines = strings.Split(strings.TrimSpace(agent), "\n")
+	require.Len(t, lines, 3)
+	require.Contains(t, lines[1], "issue=01hznq7vfpk1xgd8r5mabxd4ex")
+	require.Contains(t, lines[1], "remote=true")
+	require.Contains(t, lines[1], "web_url=https://hub.example/issue")
+	require.Contains(t, lines[2], "issue=d4ex")
+	require.NotContains(t, lines[2], "remote=")
+}

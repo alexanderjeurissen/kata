@@ -207,6 +207,7 @@ func printSearchResults(cmd *cobra.Command, bs []byte) error {
 		DegradedReason string `json:"degraded_reason"`
 		Results        []struct {
 			Issue struct {
+				UID      string  `json:"uid"`
 				ShortID  string  `json:"short_id"`
 				Title    string  `json:"title"`
 				Body     string  `json:"body"`
@@ -217,6 +218,8 @@ func printSearchResults(cmd *cobra.Command, bs []byte) error {
 			} `json:"issue"`
 			Score     float64  `json:"score"`
 			MatchedIn []string `json:"matched_in"`
+			Remote    bool     `json:"remote"`
+			WebURL    string   `json:"web_url"`
 		} `json:"results"`
 	}
 	if err := json.Unmarshal(bs, &b); err != nil {
@@ -244,9 +247,13 @@ func printSearchResults(cmd *cobra.Command, bs []byte) error {
 			return err
 		}
 		for _, r := range b.Results {
+			ref := r.Issue.ShortID
+			if r.Remote {
+				ref = strings.ToLower(r.Issue.UID)
+			}
 			excerpt := searchAgentExcerpt(b.Query, r.Issue.Body)
 			fields := []agentField{
-				agentRowField("issue", r.Issue.ShortID),
+				agentRowField("issue", ref),
 				agentRowFloatField("score", r.Score),
 				agentRowField("status", r.Issue.Status),
 				agentRowListField("matched", r.MatchedIn),
@@ -255,6 +262,9 @@ func printSearchResults(cmd *cobra.Command, bs []byte) error {
 				agentRowIntField("priority", r.Issue.Priority),
 				agentRowField("revision", fmt.Sprint(r.Issue.Revision)),
 				agentOptionalRowField("excerpt", &excerpt),
+			}
+			if r.Remote {
+				fields = append(fields, agentRowField("remote", "true"), agentOptionalRowField("web_url", &r.WebURL))
 			}
 			if err := writeAgentKVRow(out, fields...); err != nil {
 				return err
@@ -309,10 +319,18 @@ func printSearchResults(cmd *cobra.Command, bs []byte) error {
 		scoreFmt = "%.4f"
 	}
 	for _, r := range b.Results {
-		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%-8s  "+scoreFmt+"  %-8s  %s  (%s)\n",
-			r.Issue.ShortID, r.Score, r.Issue.Status,
+		ref, suffix := r.Issue.ShortID, ""
+		if r.Remote {
+			ref = strings.ToLower(r.Issue.UID)
+			suffix = "  [remote]"
+			if r.WebURL != "" {
+				suffix += "  " + textsafe.Line(r.WebURL)
+			}
+		}
+		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%-8s  "+scoreFmt+"  %-8s  %s  (%s)%s\n",
+			ref, r.Score, r.Issue.Status,
 			textsafe.Line(r.Issue.Title),
-			strings.Join(r.MatchedIn, ",")); err != nil {
+			strings.Join(r.MatchedIn, ","), suffix); err != nil {
 			return err
 		}
 	}
