@@ -386,19 +386,32 @@ func TestReconcileDirectSpokeEmbedsOnlyPrivateProjects(t *testing.T) {
 	require.Contains(t, encoded[0][0], "private search target")
 }
 
-func TestReconcilePausedDirectSpokeDoesNotEmbed(t *testing.T) {
+func TestReconcileProviderLeaveDoesNotEmbedSharedIssues(t *testing.T) {
 	ctx := t.Context()
 	store := newReconcilerTestStore(t)
 	project, err := store.CreateProject(ctx, "shared-project")
 	require.NoError(t, err)
-	_, _, err = store.CreateIssue(ctx, db.CreateIssueParams{ProjectID: project.ID, Title: "paused project issue", Author: "member"})
+	_, _, err = store.CreateIssue(ctx, db.CreateIssueParams{ProjectID: project.ID, Title: "shared project issue", Author: "member"})
 	require.NoError(t, err)
-	_, err = store.UpsertFederationBinding(ctx, db.FederationBinding{ProjectID: project.ID, Role: db.FederationRoleSpoke, HubURL: "https://hub.example", HubProjectID: 1, HubProjectUID: project.UID, Enabled: false})
+	_, err = store.UpsertFederationBinding(ctx, db.FederationBinding{ProjectID: project.ID, Role: db.FederationRoleSpoke, HubURL: "https://hub.example", HubProjectID: 1, HubProjectUID: project.UID, Enabled: true})
+	require.NoError(t, err)
+	require.NoError(t, stopProviderFederationTransport(ctx, store, project.ID))
+	binding, err := store.FederationBindingByProject(ctx, project.ID)
+	require.NoError(t, err)
+	require.False(t, binding.Enabled)
+	private, err := store.CreateProject(ctx, "private-project")
+	require.NoError(t, err)
+	_, _, err = store.CreateIssue(ctx, db.CreateIssueParams{ProjectID: private.ID, Title: "private project issue", Author: "member"})
 	require.NoError(t, err)
 	emb := newReconcilerArtifactEmbedder(t, "example-model")
 	r := NewReconciler(store, openTestVectorIndex(t), emb, ReconcilerConfig{BatchSize: 64})
+	allowed, err := r.projectGenerationAllowed(ctx, project.UID, embedding.ArtifactIdentity{}, false)
+	require.NoError(t, err)
+	require.False(t, allowed)
 	require.NoError(t, r.reconcileOnce(ctx))
-	require.Empty(t, emb.inputs())
+	require.Len(t, emb.inputs(), 1)
+	require.Len(t, emb.inputs()[0], 1)
+	require.Contains(t, emb.inputs()[0][0], "private project issue")
 }
 
 type reconcilerArtifactEmbedder struct {
