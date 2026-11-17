@@ -119,6 +119,8 @@ var storageScenarios = []scenario{
 		RunRelayCrossProjectBoundary(t, store, backend)
 		return nil
 	}},
+	{name: "relay archived source restoration", runWithBackend: checkRelayArchivedSourceRestoration},
+	{name: "relay archived peer reconnect", run: checkRelayArchivedPeerReconnect},
 	{name: "relay cross-link reset history", runWithBackend: func(t *testing.T, store db.Storage, backend Backend) error {
 		RunRelayCrossLinkResetHistory(t, store, backend)
 		return nil
